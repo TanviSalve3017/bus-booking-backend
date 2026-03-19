@@ -2,21 +2,20 @@ require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
-const moment = require("moment-timezone"); // 🕒 Timezone साठी ॲड केले
+const moment = require("moment-timezone"); // 🕒 Timezone साठी
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// डेटाबेस कनेक्शन
+// 🛡️ डेटाबेस कनेक्शन (Environment Variables वापरून)
 const db = mysql.createConnection({
-  host: process.env.DB_HOST || "localhost",
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASSWORD || "tanvi", 
-  database: process.env.DB_NAME || "bus_reservation",
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD, 
+  database: process.env.DB_NAME,
   timezone: '+05:30' // MySQL ला IST मध्ये ठेवण्यासाठी
 });
-
 db.connect((err) => {
     if (err) console.error("❌ Database Connection Failed:", err.message);
     else console.log("✅ Database Connected Successfully!");
