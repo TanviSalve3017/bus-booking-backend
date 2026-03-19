@@ -8,14 +8,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🛡️ डेटाबेस कनेक्शन (Environment Variables वापरून)
+// 🛡️ डेटाबेस कनेक्शन (Aiven Cloud साठी अपडेटेड)
 const db = mysql.createConnection({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD, 
   database: process.env.DB_NAME,
-  timezone: '+05:30' // MySQL ला IST मध्ये ठेवण्यासाठी
+  port: process.env.DB_PORT || 23996, // 👈 हा पोर्ट नंबर खूप महत्वाचा आहे!
+  timezone: '+05:30',
+  ssl: {
+    rejectUnauthorized: false // 👈 Aiven साठी ही ओळ कंपल्सरी आहे!
+  }
 });
+
 db.connect((err) => {
     if (err) console.error("❌ Database Connection Failed:", err.message);
     else console.log("✅ Database Connected Successfully!");
