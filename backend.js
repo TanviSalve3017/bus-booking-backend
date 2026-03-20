@@ -10,23 +10,23 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🛡️ डेटाबेस कनेक्शन (Aiven Cloud साठी अपडेटेड)
 const db = mysql.createConnection({
-  // इथे थेट Host टाकल्यामुळे 'ENOTFOUND' एरर येण्याची शक्यता कमी होईल
-  host: process.env.DB_HOST || "mysql-16a68106-bus-reservation-j.aivencloud.com",
-  user: process.env.DB_USER || "avnadmin",
+  host: "mysql-16a68106-bus-reservation-j.aivencloud.com",
+  user: process.env.DB_USER,
   password: process.env.DB_PASSWORD, 
-  database: process.env.DB_NAME || "bus_reservation",
-  port: process.env.DB_PORT || 23996, 
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT || 23996, // 👈 हा पोर्ट नंबर खूप महत्वाचा आहे!
   timezone: '+05:30',
   ssl: {
-    rejectUnauthorized: false 
+    rejectUnauthorized: false // 👈 Aiven साठी ही ओळ कंपल्सरी आहे!
   }
 });
-
 db.connect((err) => {
-    if (err) console.error("❌ Database Connection Failed:", err.message);
-    else console.log("✅ Database Connected Successfully!");
+    if (err) {
+        console.error("❌ Database Connection Failed:", err.message);
+    } else {
+        console.log("✅ Database Connected Successfully via Clever Cloud!");
+    }
 });
 
 // ==========================================
