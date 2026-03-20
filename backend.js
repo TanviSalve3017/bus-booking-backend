@@ -1,4 +1,6 @@
-require('dotenv').config(); 
+if (process.env.NODE_ENV !== 'production') {
+    require('dotenv').config();
+}
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
@@ -10,7 +12,7 @@ app.use(express.json());
 
 // 🛡️ डेटाबेस कनेक्शन (Aiven Cloud साठी अपडेटेड)
 const db = mysql.createConnection({
-  host: process.env.DB_HOST,
+  host: "mysql-16a68106-bus-reservation-j.aivencloud.com",
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD, 
   database: process.env.DB_NAME,
