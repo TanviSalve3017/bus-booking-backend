@@ -25,7 +25,7 @@ db.connect((err) => {
     if (err) {
         console.error("❌ Database Connection Failed:", err.message);
     } else {
-        console.log("✅ Database Connected Successfully via Clever Cloud!");
+        console.log("✅ Database Connected Successfully");
     }
 });
 
