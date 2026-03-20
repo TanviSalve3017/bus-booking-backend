@@ -4,11 +4,10 @@ if (process.env.NODE_ENV !== 'production') {
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
-const moment = require("moment-timezone"); // 🕒 Timezone साठी
+const moment = require("moment-timezone");
 
 const app = express();
 
-// ✅ बदल १: CORS लॉजिक सुधारले (Frontend ला Access देण्यासाठी)
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE"],
@@ -39,19 +38,44 @@ db.connect((err) => {
 });
 
 // ==========================================
-// १. LOGIN API
+// १. REGISTER API (नवीन युजरसाठी - हा कोड आधी नव्हता)
 // ==========================================
-app.post("/api/login", (req, res) => {
-    const { email, password } = req.body;
-    db.query("SELECT * FROM users WHERE email = ? AND password = ?", [email, password], (err, results) => {
-        if (err) return res.status(500).json({ success: false });
-        if (results.length > 0) res.json({ success: true, user: results[0] });
-        else res.status(401).json({ success: false, message: "Invalid credentials" });
+app.post("/api/register", (req, res) => {
+    const { name, email, password, mobile } = req.body;
+    
+    // आधी चेक करा की हा ईमेल आधीच आहे का
+    db.query("SELECT * FROM users WHERE email = ?", [email], (err, results) => {
+        if (err) return res.status(500).json({ success: false, error: err.message });
+        if (results.length > 0) {
+            return res.status(400).json({ success: false, message: "Email already exists" });
+        }
+
+        const sql = "INSERT INTO users (name, email, password, mobile) VALUES (?, ?, ?, ?)";
+        db.query(sql, [name, email, password, mobile], (insertErr, result) => {
+            if (insertErr) return res.status(500).json({ success: false, error: insertErr.message });
+            res.json({ success: true, message: "User registered successfully!" });
+        });
     });
 });
 
 // ==========================================
-// २. BUS SEARCH API (✅ बदल २: /api/ Prefix लावले)
+// २. LOGIN API
+// ==========================================
+app.post("/api/login", (req, res) => {
+    const { email, password } = req.body;
+    // SQL मध्ये ? वापरून सुरक्षित लॉगिन
+    db.query("SELECT * FROM users WHERE email = ? AND password = ?", [email, password], (err, results) => {
+        if (err) return res.status(500).json({ success: false, error: err.message });
+        if (results.length > 0) {
+            res.json({ success: true, user: results[0] });
+        } else {
+            res.status(401).json({ success: false, message: "Invalid credentials" });
+        }
+    });
+});
+
+// ==========================================
+// ३. BUS SEARCH API
 // ==========================================
 app.get("/api/buses", (req, res) => {
     let { from, to } = req.query;
@@ -77,7 +101,7 @@ app.get("/api/buses", (req, res) => {
 });
 
 // ==========================================
-// ३. SEATS API (✅ बदल ३: /api/ Prefix लावले सुसंगततेसाठी)
+// ४. SEATS API
 // ==========================================
 app.get("/api/seats/:busId", (req, res) => {
     const { busId } = req.params;
@@ -88,7 +112,7 @@ app.get("/api/seats/:busId", (req, res) => {
 });
 
 // ==========================================
-// ४. VERIFY PAYMENT & SAVE BOOKING
+// ५. VERIFY PAYMENT & SAVE BOOKING
 // ==========================================
 app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
@@ -145,7 +169,7 @@ app.post("/api/verify-payment", (req, res) => {
 });
 
 // ==========================================
-// ५. GET MY BOOKINGS 
+// ६. GET MY BOOKINGS 
 // ==========================================
 app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
@@ -177,7 +201,7 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 });
 
 // ==========================================
-// ६. CANCEL TICKET 
+// ७. CANCEL TICKET 
 // ==========================================
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
