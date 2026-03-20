@@ -7,21 +7,27 @@ const mysql = require("mysql2");
 const moment = require("moment-timezone"); // 🕒 Timezone साठी
 
 const app = express();
-app.use(cors());
+
+// ✅ बदल १: CORS लॉजिक सुधारले (Frontend ला Access देण्यासाठी)
+app.use(cors({
+    origin: "*", 
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true
+}));
+
 app.use(express.json());
 
 const db = mysql.createConnection({
-  // Host नाव एकदा डॅशबोर्डवर बघूनच कन्फर्म कर
   host: process.env.DB_HOST || "mysql-16a68106-bus-reservation-j.aivencloud.com",
   user: process.env.DB_USER || "avnadmin",
-  password: process.env.DB_PASSWORD, // हा तुझ्या .env मधून येईल
+  password: process.env.DB_PASSWORD, 
   database: process.env.DB_NAME || "defaultdb", 
   port: process.env.DB_PORT || 23996, 
   timezone: '+05:30',
   ssl: {
-    rejectUnauthorized: false // Aiven साठी हे अनिवार्य आहे
+    rejectUnauthorized: false 
   },
-  connectTimeout: 20000 // कनेक्शन शोधण्यासाठी २० सेकंदाचा वेळ दिलाय
+  connectTimeout: 20000 
 });
 
 db.connect((err) => {
@@ -45,9 +51,9 @@ app.post("/api/login", (req, res) => {
 });
 
 // ==========================================
-// २. BUS SEARCH API
+// २. BUS SEARCH API (✅ बदल २: /api/ Prefix लावले)
 // ==========================================
-app.get("/buses", (req, res) => {
+app.get("/api/buses", (req, res) => {
     let { from, to } = req.query;
     const fromCity = from ? from.toLowerCase().trim() : "";
     const toCity = to ? to.toLowerCase().trim() : "";
@@ -71,9 +77,9 @@ app.get("/buses", (req, res) => {
 });
 
 // ==========================================
-// ३. SEATS API
+// ३. SEATS API (✅ बदल ३: /api/ Prefix लावले सुसंगततेसाठी)
 // ==========================================
-app.get("/seats/:busId", (req, res) => {
+app.get("/api/seats/:busId", (req, res) => {
     const { busId } = req.params;
     db.query("SELECT * FROM seats WHERE bus_id = ?", [busId], (err, results) => {
         if (err) return res.status(500).json(err);
@@ -82,7 +88,7 @@ app.get("/seats/:busId", (req, res) => {
 });
 
 // ==========================================
-// ४. VERIFY PAYMENT & SAVE BOOKING (मास्टर फिक्स)
+// ४. VERIFY PAYMENT & SAVE BOOKING
 // ==========================================
 app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
@@ -139,7 +145,7 @@ app.post("/api/verify-payment", (req, res) => {
 });
 
 // ==========================================
-// ५. GET MY BOOKINGS (तारीख अचूक दाखवण्यासाठी बदल)
+// ५. GET MY BOOKINGS 
 // ==========================================
 app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
@@ -161,7 +167,6 @@ app.get("/api/my-bookings/:userId", (req, res) => {
             return res.status(500).json({ error: err.message });
         }
 
-        // 🔥 तारीख फिक्स: Database मधून येणारी तारीख IST मध्ये फॉरमॅट करणे
         const formattedResults = results.map(row => ({
             ...row,
             travel_date: moment(row.travel_date).tz("Asia/Kolkata").format("YYYY-MM-DD")
@@ -172,7 +177,7 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 });
 
 // ==========================================
-// ६. CANCEL TICKET (IST Refund Logic Integrated)
+// ६. CANCEL TICKET 
 // ==========================================
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
@@ -193,17 +198,14 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
                 return res.status(400).json({ success: false, message: "Already cancelled" });
             }
 
-            // 🕒 रिफंड लॉजिक सुधारणा (IST नुसार):
             const todayIST = moment().tz("Asia/Kolkata").startOf('day');
             const journeyDateIST = moment(travel_date).tz("Asia/Kolkata").startOf('day');
-
-            // दिवसांमधील अचूक फरक
             const diffDays = journeyDateIST.diff(todayIST, 'days');
 
             let refundPercent = 0;
-            if (diffDays >= 2) refundPercent = 0.70;      // २ किंवा जास्त दिवसांआधी ७०%
-            else if (diffDays === 1) refundPercent = 0.50; // १ दिवस आधी ५०%
-            else refundPercent = 0;                        // प्रवासाच्या दिवशी ०%
+            if (diffDays >= 2) refundPercent = 0.70;      
+            else if (diffDays === 1) refundPercent = 0.50; 
+            else refundPercent = 0;                        
 
             const refundAmount = (total_amount * refundPercent).toFixed(2);
             const seatArray = seat_numbers.split(',');
@@ -212,14 +214,12 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
                 if (upErr) return res.status(500).json({ success: false, error: upErr.message });
 
                 db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seatArray], (seatErr) => {
-                    
                     let refundMsg = `Ticket Cancelled Successfully! `;
                     if (refundPercent > 0) {
                         refundMsg += `Your refund of ₹${refundAmount} (${refundPercent * 100}%) will be credited within 48 hours.`;
                     } else {
                         refundMsg += `As per policy, no refund is applicable for cancellations made on the travel day.`;
                     }
-
                     res.json({ success: true, message: refundMsg, refundAmount: refundAmount });
                 });
             });
@@ -232,5 +232,6 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
 app.get("/", (req, res) => {
     res.send("Backend is Running Perfectly!");
 });
+
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
