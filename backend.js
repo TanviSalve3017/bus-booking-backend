@@ -38,21 +38,26 @@ db.connect((err) => {
 });
 
 // ==========================================
-// १. REGISTER API (नवीन युजरसाठी - हा कोड आधी नव्हता)
+// १. REGISTER API (Updated Fix)
 // ==========================================
 app.post("/api/register", (req, res) => {
     const { name, email, password, mobile } = req.body;
     
-    // आधी चेक करा की हा ईमेल आधीच आहे का
+    // १. आधी चेक करा की हा ईमेल आधीच आहे का
     db.query("SELECT * FROM users WHERE email = ?", [email], (err, results) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
+        
         if (results.length > 0) {
             return res.status(400).json({ success: false, message: "Email already exists" });
         }
 
-        const sql = "INSERT INTO users (name, email, password, mobile) VALUES (?, ?, ?, ?)";
+        // २. 'role' सह डेटा INSERT करा कारण तुझ्या DB मध्ये तो आवश्यक आहे
+        const sql = "INSERT INTO users (name, email, password, mobile, role) VALUES (?, ?, ?, ?, 'User')";
         db.query(sql, [name, email, password, mobile], (insertErr, result) => {
-            if (insertErr) return res.status(500).json({ success: false, error: insertErr.message });
+            if (insertErr) {
+                console.error("🚨 DB Insert Error:", insertErr.message);
+                return res.status(500).json({ success: false, error: insertErr.message });
+            }
             res.json({ success: true, message: "User registered successfully!" });
         });
     });
@@ -63,7 +68,6 @@ app.post("/api/register", (req, res) => {
 // ==========================================
 app.post("/api/login", (req, res) => {
     const { email, password } = req.body;
-    // SQL मध्ये ? वापरून सुरक्षित लॉगिन
     db.query("SELECT * FROM users WHERE email = ? AND password = ?", [email, password], (err, results) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
         if (results.length > 0) {
