@@ -12,14 +12,15 @@ app.use(express.json());
 
 // 🛡️ डेटाबेस कनेक्शन (Aiven Cloud साठी अपडेटेड)
 const db = mysql.createConnection({
-  host: "mysql-16a68106-bus-reservation-j.aivencloud.com",
-  user: process.env.DB_USER,
+  // इथे थेट Host टाकल्यामुळे 'ENOTFOUND' एरर येण्याची शक्यता कमी होईल
+  host: process.env.DB_HOST || "mysql-16a68106-bus-reservation-j.aivencloud.com",
+  user: process.env.DB_USER || "avnadmin",
   password: process.env.DB_PASSWORD, 
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT || 23996, // 👈 हा पोर्ट नंबर खूप महत्वाचा आहे!
+  database: process.env.DB_NAME || "bus_reservation",
+  port: process.env.DB_PORT || 23996, 
   timezone: '+05:30',
   ssl: {
-    rejectUnauthorized: false // 👈 Aiven साठी ही ओळ कंपल्सरी आहे!
+    rejectUnauthorized: false 
   }
 });
 
