@@ -11,21 +11,24 @@ app.use(cors());
 app.use(express.json());
 
 const db = mysql.createConnection({
-  host: "mysql-16a68106-bus-reservation-j.aivencloud.com",
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD, 
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT || 23996, // 👈 हा पोर्ट नंबर खूप महत्वाचा आहे!
+  // Host नाव एकदा डॅशबोर्डवर बघूनच कन्फर्म कर
+  host: process.env.DB_HOST || "mysql-16a68106-bus-reservation-j.aivencloud.com",
+  user: process.env.DB_USER || "avnadmin",
+  password: process.env.DB_PASSWORD, // हा तुझ्या .env मधून येईल
+  database: process.env.DB_NAME || "defaultdb", 
+  port: process.env.DB_PORT || 23996, 
   timezone: '+05:30',
   ssl: {
-    rejectUnauthorized: false // 👈 Aiven साठी ही ओळ कंपल्सरी आहे!
-  }
+    rejectUnauthorized: false // Aiven साठी हे अनिवार्य आहे
+  },
+  connectTimeout: 20000 // कनेक्शन शोधण्यासाठी २० सेकंदाचा वेळ दिलाय
 });
+
 db.connect((err) => {
     if (err) {
-        console.error("❌ Database Connection Failed:", err.message);
+        console.error("❌ Aiven Connection Error:", err.message);
     } else {
-        console.log("✅ Database Connected Successfully");
+        console.log("✅ Database Connected Successfully via Aiven!");
     }
 });
 
