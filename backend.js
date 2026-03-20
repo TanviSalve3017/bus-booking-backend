@@ -8,9 +8,11 @@ const moment = require("moment-timezone");
 
 const app = express();
 
+// ✅ CORS FIX: नेटलिफाय आणि लोकलहोस्ट दोन्हीसाठी परवानगी दिली आहे
 app.use(cors({
     origin: "*", 
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true
 }));
 
@@ -38,12 +40,11 @@ db.connect((err) => {
 });
 
 // ==========================================
-// १. REGISTER API (Updated Fix)
+// १. REGISTER API (With role fix)
 // ==========================================
 app.post("/api/register", (req, res) => {
     const { name, email, password, mobile } = req.body;
     
-    // १. आधी चेक करा की हा ईमेल आधीच आहे का
     db.query("SELECT * FROM users WHERE email = ?", [email], (err, results) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
         
@@ -51,7 +52,6 @@ app.post("/api/register", (req, res) => {
             return res.status(400).json({ success: false, message: "Email already exists" });
         }
 
-        // २. 'role' सह डेटा INSERT करा कारण तुझ्या DB मध्ये तो आवश्यक आहे
         const sql = "INSERT INTO users (name, email, password, mobile, role) VALUES (?, ?, ?, ?, 'User')";
         db.query(sql, [name, email, password, mobile], (insertErr, result) => {
             if (insertErr) {
@@ -126,8 +126,6 @@ app.post("/api/verify-payment", (req, res) => {
         return res.status(400).json({ message: "No Data" });
     }
 
-    console.log("📥 Received Booking Request:", bookingDetails);
-
     const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
                         ? bookingDetails.userId 
                         : 1; 
@@ -162,8 +160,6 @@ app.post("/api/verify-payment", (req, res) => {
             return res.status(500).json({ success: false, error: err.message });
         }
         
-        console.log("✅ Booking Saved! PNR:", generatedPnr);
-        
         const seatArray = Array.isArray(bookingDetails.seats) ? bookingDetails.seats : String(bookingDetails.seats).split(',');
         db.query("UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", [bookingDetails.busId || bookingDetails.bus_id, seatArray], (updateErr) => {
             if (updateErr) console.error("🚨 Seat Update Error:", updateErr.message);
@@ -179,8 +175,6 @@ app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
     if (userId === "undefined" || userId === "null") userId = 1;
 
-    console.log(`📂 Fetching bookings for user: ${userId}`);
-
     const sql = `
         SELECT bk.*, b.bus_name, b.travel_date, r.source, r.destination 
         FROM bookings bk
@@ -190,16 +184,12 @@ app.get("/api/my-bookings/:userId", (req, res) => {
         ORDER BY bk.booking_date DESC`;
 
     db.query(sql, [userId], (err, results) => {
-        if (err) {
-            console.error("🚨 My Bookings Fetch Error:", err.message);
-            return res.status(500).json({ error: err.message });
-        }
+        if (err) return res.status(500).json({ error: err.message });
 
         const formattedResults = results.map(row => ({
             ...row,
             travel_date: moment(row.travel_date).tz("Asia/Kolkata").format("YYYY-MM-DD")
         }));
-
         res.json(formattedResults);
     });
 });
@@ -221,20 +211,13 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
 
         if (results && results.length > 0) {
             const { bus_id, seat_numbers, total_amount, travel_date, status } = results[0];
-
-            if (status === 'Cancelled') {
-                return res.status(400).json({ success: false, message: "Already cancelled" });
-            }
+            if (status === 'Cancelled') return res.status(400).json({ success: false, message: "Already cancelled" });
 
             const todayIST = moment().tz("Asia/Kolkata").startOf('day');
             const journeyDateIST = moment(travel_date).tz("Asia/Kolkata").startOf('day');
             const diffDays = journeyDateIST.diff(todayIST, 'days');
 
-            let refundPercent = 0;
-            if (diffDays >= 2) refundPercent = 0.70;      
-            else if (diffDays === 1) refundPercent = 0.50; 
-            else refundPercent = 0;                        
-
+            let refundPercent = (diffDays >= 2) ? 0.70 : (diffDays === 1 ? 0.50 : 0);
             const refundAmount = (total_amount * refundPercent).toFixed(2);
             const seatArray = seat_numbers.split(',');
 
@@ -243,11 +226,9 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
 
                 db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seatArray], (seatErr) => {
                     let refundMsg = `Ticket Cancelled Successfully! `;
-                    if (refundPercent > 0) {
-                        refundMsg += `Your refund of ₹${refundAmount} (${refundPercent * 100}%) will be credited within 48 hours.`;
-                    } else {
-                        refundMsg += `As per policy, no refund is applicable for cancellations made on the travel day.`;
-                    }
+                    refundMsg += (refundPercent > 0) 
+                        ? `Your refund of ₹${refundAmount} (${refundPercent * 100}%) will be credited within 48 hours.`
+                        : `As per policy, no refund is applicable for travel day cancellations.`;
                     res.json({ success: true, message: refundMsg, refundAmount: refundAmount });
                 });
             });
