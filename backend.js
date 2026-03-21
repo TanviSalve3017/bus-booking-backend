@@ -10,7 +10,6 @@ const app = express();
 
 // ✅ CORS FIX: नेटलिफाय आणि लोकलहोस्ट दोन्हीसाठी सुरक्षित रित्या परवानगी
 // आपण origin: "*" ठेवल्यामुळे कोणत्याही फ्रंटएंडवरून विनंती स्वीकारली जाईल.
-// 'optionsSuccessStatus' मुळे प्री-फ्लाइट रिक्वेस्ट सक्सेसफुल होतात.
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -19,12 +18,13 @@ app.use(cors({
     optionsSuccessStatus: 200 
 }));
 
-// ✅ OPTIONS रिक्वेस्टसाठी मॅनुअल हँडलर (CORS साठी अत्यंत आवश्यक)
-app.options("*", cors());
+// ✅ EXPRESS 5 FIX: नवीन व्हर्जनमध्ये "*" ऐवजी "(.*)" वापरावे लागते.
+// यामुळे 'PathError: Missing parameter name' हा एरर येणार नाही.
+app.options("(.*)", cors());
 
 app.use(express.json());
 
-// ✅ ब्राउझर सिक्युरिटी हेडर्स (जास्तीची सुरक्षा)
+// ✅ जास्तीचे सिक्युरिटी हेडर्स (CORS ला मदत करण्यासाठी)
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
