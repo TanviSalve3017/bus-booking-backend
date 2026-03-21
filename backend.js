@@ -8,7 +8,7 @@ const moment = require("moment-timezone");
 
 const app = express();
 
-// ✅ CORS FIX: नेटलिफाय आणि लोकलहोस्ट दोन्हीसाठी सुरक्षित रित्या परवानगी
+// ✅ १. सर्वात आधी CORS सेटअप
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -17,18 +17,21 @@ app.use(cors({
     optionsSuccessStatus: 200 
 }));
 
-// ✅ EXPRESS 5 FIX: (.*) ऐवजी /:path* वापरावे लागते, नाहीतर Render वर Error येतो.
-app.options("/:path*", cors()); 
-
-app.use(express.json());
-
-// ✅ ब्राउझर सिक्युरिटी हेडर्स
+// ✅ २. EXPRESS 5 Wildcard Fix: 
+// आपण app.options("/:path*") ऐवजी थेट middleware वापरू जेणेकरून PathError येणार नाही.
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    
+    // ब्राउझरच्या प्री-फ्लाइट (OPTIONS) रिक्वेस्टसाठी
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
     next();
 });
+
+app.use(express.json());
 
 // ✅ DATABASE RECONNECTION LOGIC: Aiven कनेक्शन टिकवून ठेवण्यासाठी
 let db;
@@ -262,7 +265,7 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
     });
 });
 
-// ✅ नवीन हेल्थ चेक रूट (डेटाबेस तपासण्यासाठी)
+// ✅ हेल्थ चेक रूट
 app.get("/api/health", (req, res) => {
     db.query("SELECT 1", (err) => {
         if (err) return res.status(500).json({ status: "Database Offline", error: err.message });
