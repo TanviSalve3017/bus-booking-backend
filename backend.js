@@ -9,15 +9,28 @@ const moment = require("moment-timezone");
 const app = express();
 
 // ✅ CORS FIX: नेटलिफाय आणि लोकलहोस्ट दोन्हीसाठी सुरक्षित रित्या परवानगी
-// आपण origin: "*" ठेवल्यामुळे कोणत्याही फ्रंटएंडवरून विनंती स्वीकारली जाईल
+// आपण origin: "*" ठेवल्यामुळे कोणत्याही फ्रंटएंडवरून विनंती स्वीकारली जाईल.
+// 'optionsSuccessStatus' मुळे प्री-फ्लाइट रिक्वेस्ट सक्सेसफुल होतात.
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+    credentials: true,
+    optionsSuccessStatus: 200 
 }));
 
+// ✅ OPTIONS रिक्वेस्टसाठी मॅनुअल हँडलर (CORS साठी अत्यंत आवश्यक)
+app.options("*", cors());
+
 app.use(express.json());
+
+// ✅ ब्राउझर सिक्युरिटी हेडर्स (जास्तीची सुरक्षा)
+app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    next();
+});
 
 // ✅ DATABASE RECONNECTION LOGIC: Aiven कनेक्शन टिकवून ठेवण्यासाठी
 let db;
@@ -248,6 +261,14 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
         } else { 
             res.status(404).json({ success: false, message: "PNR not found" }); 
         }
+    });
+});
+
+// ✅ नवीन हेल्थ चेक रूट (डेटाबेस तपासण्यासाठी)
+app.get("/api/health", (req, res) => {
+    db.query("SELECT 1", (err) => {
+        if (err) return res.status(500).json({ status: "Database Offline", error: err.message });
+        res.json({ status: "Online", message: "Backend & Database working fine!" });
     });
 });
 
