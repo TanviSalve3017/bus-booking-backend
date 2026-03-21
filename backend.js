@@ -136,10 +136,21 @@ app.get("/api/buses", (req, res) => {
 // ==========================================
 // ४. SEATS API
 // ==========================================
+// ==========================================
+// ४. SEATS API
+// ==========================================
 app.get("/api/seats/:busId", (req, res) => {
     const { busId } = req.params;
-    // ✅ बदल: इथून सुद्धा फक्त Unique सीट आयडी येतील याची खात्री
-    db.query("SELECT * FROM seats WHERE bus_id = ? ORDER BY seat_number", [busId], (err, results) => {
+    
+    // ✅ 'Natural Sort' लॉजिक लावले आहे ज्यामुळे L1 नंतर L2 येईल, L10 नाही
+    const sql = `
+        SELECT * FROM seats 
+        WHERE bus_id = ? 
+        ORDER BY 
+            LENGTH(seat_number) ASC, 
+            seat_number ASC`;
+
+    db.query(sql, [busId], (err, results) => {
         if (err) return res.status(500).json(err);
         res.json(results);
     });
