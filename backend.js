@@ -9,7 +9,6 @@ const moment = require("moment-timezone");
 const app = express();
 
 // ✅ CORS FIX: नेटलिफाय आणि लोकलहोस्ट दोन्हीसाठी सुरक्षित रित्या परवानगी
-// आपण origin: "*" ठेवल्यामुळे कोणत्याही फ्रंटएंडवरून विनंती स्वीकारली जाईल.
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -18,13 +17,12 @@ app.use(cors({
     optionsSuccessStatus: 200 
 }));
 
-// ✅ EXPRESS 5 FIX: नवीन व्हर्जनमध्ये "*" ऐवजी "(.*)" वापरावे लागते.
-// यामुळे 'PathError: Missing parameter name' हा एरर येणार नाही.
-app.options("(.*)", cors());
+// ✅ EXPRESS 5 FIX: (.*) ऐवजी /:path* वापरावे लागते, नाहीतर Render वर Error येतो.
+app.options("/:path*", cors()); 
 
 app.use(express.json());
 
-// ✅ जास्तीचे सिक्युरिटी हेडर्स (CORS ला मदत करण्यासाठी)
+// ✅ ब्राउझर सिक्युरिटी हेडर्स
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -49,7 +47,7 @@ function handleDisconnect() {
     db.connect((err) => {
         if (err) {
             console.error("❌ Aiven Connection Error:", err.message);
-            setTimeout(handleDisconnect, 2000); // एरर आल्यास २ सेकंदाने पुन्हा प्रयत्न
+            setTimeout(handleDisconnect, 2000); 
         } else {
             console.log("✅ Database Connected Successfully via Aiven!");
         }
@@ -58,7 +56,7 @@ function handleDisconnect() {
     db.on('error', (err) => {
         console.error('🚨 Database Error:', err);
         if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-            handleDisconnect(); // कनेक्शन तुटले तर ऑटोमॅटिक रिस्टार्ट
+            handleDisconnect(); 
         } else {
             throw err;
         }
