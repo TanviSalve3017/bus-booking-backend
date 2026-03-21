@@ -9,6 +9,7 @@ const moment = require("moment-timezone");
 const app = express();
 
 // ✅ CORS FIX: नेटलिफाय आणि लोकलहोस्ट दोन्हीसाठी सुरक्षित रित्या परवानगी
+// आपण origin: "*" ठेवल्यामुळे कोणत्याही फ्रंटएंडवरून विनंती स्वीकारली जाईल
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
