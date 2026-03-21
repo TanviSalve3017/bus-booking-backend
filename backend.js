@@ -105,8 +105,6 @@ app.get("/api/buses", (req, res) => {
     const fromCity = from ? from.toLowerCase().trim() : "";
     const toCity = to ? to.toLowerCase().trim() : "";
 
-    console.log(`🔍 Searching buses for: ${fromCity} to ${toCity}`);
-
     let sql = `
         SELECT DISTINCT b.*, r.source, r.destination, o.operator_name 
         FROM buses b 
@@ -123,10 +121,7 @@ app.get("/api/buses", (req, res) => {
     if (operator) { sql += " AND o.operator_name = ?"; params.push(operator); }
 
     db.query(sql, params, (err, results) => {
-        if (err) {
-            console.error("🚨 Search Error:", err);
-            return res.status(500).send(err);
-        }
+        if (err) return res.status(500).send(err);
         res.json(results);
     });
 });
@@ -136,13 +131,7 @@ app.get("/api/buses", (req, res) => {
 // ==========================================
 app.get("/api/seats/:busId", (req, res) => {
     const { busId } = req.params;
-    const sql = `
-        SELECT * FROM seats 
-        WHERE bus_id = ? 
-        ORDER BY 
-            LENGTH(seat_number) ASC, 
-            seat_number ASC`;
-
+    const sql = `SELECT * FROM seats WHERE bus_id = ? ORDER BY LENGTH(seat_number) ASC, seat_number ASC`;
     db.query(sql, [busId], (err, results) => {
         if (err) return res.status(500).json(err);
         res.json(results);
@@ -156,7 +145,6 @@ app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
-    // ✅ सुधारलेले logic: userId मिळवण्यासाठी सर्व शक्यता तपासा
     const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
                         ? bookingDetails.userId 
                         : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
@@ -181,8 +169,8 @@ app.post("/api/verify-payment", (req, res) => {
     ], (err, result) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
         
-        const seatArray = Array.isArray(bookingDetails.seats) ? bookingDetails.seats : String(bookingDetails.seats).split(',');
-        db.query("UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", [bookingDetails.busId || bookingDetails.bus_id, seatArray], (updateErr) => {
+        const seatArray = seatString.split(',');
+        db.query("UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", [bookingDetails.busId || bookingDetails.bus_id, seatArray], () => {
             res.json({ success: true, pnr: generatedPnr });
         });
     });
@@ -214,7 +202,7 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 });
 
 // ==========================================
-// ७. CANCEL TICKET 
+// ७. CANCEL TICKET (सुधारलेले लॉजिक - ७०%, ५०%, ०%)
 // ==========================================
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
@@ -224,26 +212,41 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
         if (results && results.length > 0) {
             const { bus_id, seat_numbers, total_amount, travel_date, status } = results[0];
+            
             if (status === 'Cancelled') return res.status(400).json({ success: false, message: "Already cancelled" });
 
-            const diffDays = moment(travel_date).diff(moment(), 'days');
-            let refundPercent = (diffDays >= 2) ? 0.70 : (diffDays === 1 ? 0.50 : 0);
+            // तासांमधील फरक काढा (Hours Difference)
+            const journeyTime = moment(travel_date).tz("Asia/Kolkata");
+            const currentTime = moment().tz("Asia/Kolkata");
+            const diffHours = journeyTime.diff(currentTime, 'hours');
+
+            // Policy Logic: 24hrs -> 70%, 12hrs -> 50%, else 0%
+            let refundPercent = 0;
+            if (diffHours >= 24) {
+                refundPercent = 0.70;
+            } else if (diffHours >= 12) {
+                refundPercent = 0.50;
+            } else {
+                refundPercent = 0;
+            }
+
             const refundAmount = (total_amount * refundPercent).toFixed(2);
 
             db.query("UPDATE bookings SET status = 'Cancelled' WHERE pnr = ?", [pnr], (upErr) => {
+                if (upErr) return res.status(500).json({ success: false, error: upErr.message });
+                
                 db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seat_numbers.split(',')], (seatErr) => {
                     res.json({ success: true, message: `Cancelled! Refund: ₹${refundAmount}` });
                 });
             });
-        } else { res.status(404).json({ success: false, message: "PNR not found" }); }
+        } else { 
+            res.status(404).json({ success: false, message: "PNR not found" }); 
+        }
     });
 });
 
 app.get("/api/health", (req, res) => {
-    db.query("SELECT 1", (err) => {
-        if (err) return res.status(500).json({ status: "Database Offline" });
-        res.json({ status: "Online" });
-    });
+    db.query("SELECT 1", (err) => res.json({ status: err ? "Offline" : "Online" }));
 });
 
 app.get("/", (req, res) => { res.send("Backend is Running!"); });
