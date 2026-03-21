@@ -202,7 +202,7 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 });
 
 // ==========================================
-// ७. CANCEL TICKET (तारीख स्ट्रिंगवर आधारित अचूक लॉजिक)
+// ७. CANCEL TICKET (अचूक तासांवर आधारित लॉजिक)
 // ==========================================
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
@@ -215,24 +215,24 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
             
             if (status === 'Cancelled') return res.status(400).json({ success: false, message: "आधीच कॅन्सल झाले आहे." });
 
-            // १. आजची तारीख आणि प्रवासाची तारीख YYYY-MM-DD फॉरमॅटमध्ये मिळवा
-            const travelDateStr = moment(travel_date).tz("Asia/Kolkata").format("YYYY-MM-DD");
-            const todayStr = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
+            // १. प्रवासाची वेळ आणि सध्याची वेळ मिलीसेकंदमध्ये मिळवा
+            const journeyTime = new Date(travel_date).getTime();
+            const currentTime = new Date().getTime();
 
-            // २. दिवसांमधील फरक काढा
-            const date1 = moment(travelDateStr);
-            const date2 = moment(todayStr);
-            const diffDays = date1.diff(date2, 'days');
+            // २. तासांमधील फरक काढा (Milliseconds to Hours)
+            const diffInHours = (journeyTime - currentTime) / (1000 * 60 * 60);
+
+            console.log(`PNR: ${pnr} | Hours Left: ${diffInHours.toFixed(2)}`);
 
             let refundPercent = 0;
 
-            // पॉलिसी: प्रवासाच्या १ दिवस आधी ५०%, २ किंवा जास्त दिवस आधी ७०%
-            if (diffDays >= 2) {
-                refundPercent = 0.70; // ७०% रिफंड
-            } else if (diffDays === 1) {
-                refundPercent = 0.50; // ५०% रिफंड
+            // पॉलिसीनुसार रिफंड ठरवा
+            if (diffInHours >= 24) {
+                refundPercent = 0.70; // २४ तासांपेक्षा जास्त वेळ: ७०%
+            } else if (diffInHours >= 12) {
+                refundPercent = 0.50; // १२ ते २४ तास: ५०%
             } else {
-                refundPercent = 0;    // आजचीच तारीख असेल तर ₹०
+                refundPercent = 0;    // १२ तासांपेक्षा कमी: ०%
             }
 
             const refundAmount = (total_amount * refundPercent).toFixed(2);
