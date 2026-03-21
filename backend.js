@@ -202,10 +202,7 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 });
 
 // ==========================================
-// ७. CANCEL TICKET (सुधारलेले लॉजिक - ७०%, ५०%, ०%)
-// ==========================================
-// ==========================================
-// ७. CANCEL TICKET (तारीख फॉरमॅट फिक्ससह)
+// ७. CANCEL TICKET (तारीख स्ट्रिंगवर आधारित अचूक लॉजिक)
 // ==========================================
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
@@ -216,23 +213,26 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
         if (results && results.length > 0) {
             const { bus_id, seat_numbers, total_amount, travel_date, status } = results[0];
             
-            if (status === 'Cancelled') return res.status(400).json({ success: false, message: "हे तिकीट आधीच कॅन्सल झाले आहे." });
+            if (status === 'Cancelled') return res.status(400).json({ success: false, message: "आधीच कॅन्सल झाले आहे." });
 
-            // ✅ तारीख नीट ओळखण्यासाठी Moment ला फॉरमॅट सांगा
-            // डेटाबेसमध्ये '2026-03-23' असा फॉरमॅट असेल तर तो अचूक मॅच होईल
-            const journeyTime = moment(travel_date).tz("Asia/Kolkata").startOf('day'); 
-            const currentTime = moment().tz("Asia/Kolkata");
-            
-            // तासांऐवजी दिवसांचा फरक काढून पाहू (सोप्या लॉजिकसाठी)
-            const diffHours = journeyTime.diff(currentTime, 'hours');
+            // १. आजची तारीख आणि प्रवासाची तारीख YYYY-MM-DD फॉरमॅटमध्ये मिळवा
+            const travelDateStr = moment(travel_date).tz("Asia/Kolkata").format("YYYY-MM-DD");
+            const todayStr = moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
+
+            // २. दिवसांमधील फरक काढा
+            const date1 = moment(travelDateStr);
+            const date2 = moment(todayStr);
+            const diffDays = date1.diff(date2, 'days');
 
             let refundPercent = 0;
-            if (diffHours >= 24) {
-                refundPercent = 0.70; // २४ तासांपेक्षा जास्त वेळ असेल तर ७०%
-            } else if (diffHours >= 12) {
-                refundPercent = 0.50; // १२ ते २४ तासांच्या दरम्यान असेल तर ५०%
+
+            // पॉलिसी: प्रवासाच्या १ दिवस आधी ५०%, २ किंवा जास्त दिवस आधी ७०%
+            if (diffDays >= 2) {
+                refundPercent = 0.70; // ७०% रिफंड
+            } else if (diffDays === 1) {
+                refundPercent = 0.50; // ५०% रिफंड
             } else {
-                refundPercent = 0;    // १२ तासांपेक्षा कमी वेळ असल्यास ₹०
+                refundPercent = 0;    // आजचीच तारीख असेल तर ₹०
             }
 
             const refundAmount = (total_amount * refundPercent).toFixed(2);
