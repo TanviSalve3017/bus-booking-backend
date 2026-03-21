@@ -204,6 +204,9 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 // ==========================================
 // ७. CANCEL TICKET (सुधारलेले लॉजिक - ७०%, ५०%, ०%)
 // ==========================================
+// ==========================================
+// ७. CANCEL TICKET (तारीख फॉरमॅट फिक्ससह)
+// ==========================================
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
     const sqlSelect = `SELECT bk.bus_id, bk.seat_numbers, bk.total_amount, b.travel_date, bk.status FROM bookings bk JOIN buses b ON bk.bus_id = b.bus_id WHERE bk.pnr = ?`;
@@ -213,21 +216,23 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
         if (results && results.length > 0) {
             const { bus_id, seat_numbers, total_amount, travel_date, status } = results[0];
             
-            if (status === 'Cancelled') return res.status(400).json({ success: false, message: "Already cancelled" });
+            if (status === 'Cancelled') return res.status(400).json({ success: false, message: "हे तिकीट आधीच कॅन्सल झाले आहे." });
 
-            // तासांमधील फरक काढा (Hours Difference)
-            const journeyTime = moment(travel_date).tz("Asia/Kolkata");
+            // ✅ तारीख नीट ओळखण्यासाठी Moment ला फॉरमॅट सांगा
+            // डेटाबेसमध्ये '2026-03-23' असा फॉरमॅट असेल तर तो अचूक मॅच होईल
+            const journeyTime = moment(travel_date).tz("Asia/Kolkata").startOf('day'); 
             const currentTime = moment().tz("Asia/Kolkata");
+            
+            // तासांऐवजी दिवसांचा फरक काढून पाहू (सोप्या लॉजिकसाठी)
             const diffHours = journeyTime.diff(currentTime, 'hours');
 
-            // Policy Logic: 24hrs -> 70%, 12hrs -> 50%, else 0%
             let refundPercent = 0;
             if (diffHours >= 24) {
-                refundPercent = 0.70;
+                refundPercent = 0.70; // २४ तासांपेक्षा जास्त वेळ असेल तर ७०%
             } else if (diffHours >= 12) {
-                refundPercent = 0.50;
+                refundPercent = 0.50; // १२ ते २४ तासांच्या दरम्यान असेल तर ५०%
             } else {
-                refundPercent = 0;
+                refundPercent = 0;    // १२ तासांपेक्षा कमी वेळ असल्यास ₹०
             }
 
             const refundAmount = (total_amount * refundPercent).toFixed(2);
@@ -236,11 +241,15 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
                 if (upErr) return res.status(500).json({ success: false, error: upErr.message });
                 
                 db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seat_numbers.split(',')], (seatErr) => {
-                    res.json({ success: true, message: `Cancelled! Refund: ₹${refundAmount}` });
+                    res.json({ 
+                        success: true, 
+                        message: `Cancelled! Refund: ₹${refundAmount}`,
+                        refundAmount: refundAmount 
+                    });
                 });
             });
         } else { 
-            res.status(404).json({ success: false, message: "PNR not found" }); 
+            res.status(404).json({ success: false, message: "PNR सापडला नाही." }); 
         }
     });
 });
