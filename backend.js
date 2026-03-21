@@ -98,16 +98,15 @@ app.post("/api/login", (req, res) => {
 });
 
 // ==========================================
-// ३. BUS SEARCH API (सुधारलेली आवृत्ती)
+// ३. BUS SEARCH API
 // ==========================================
 app.get("/api/buses", (req, res) => {
-    let { from, to, busType, maxPrice, operator, amenities } = req.query;
+    let { from, to, busType, maxPrice, operator } = req.query;
     const fromCity = from ? from.toLowerCase().trim() : "";
     const toCity = to ? to.toLowerCase().trim() : "";
 
     console.log(`🔍 Searching buses for: ${fromCity} to ${toCity}`);
 
-    // ✅ बदल: DISTINCT वापरला आहे जेणेकरून ड्युप्लिकेट येणार नाहीत
     let sql = `
         SELECT DISTINCT b.*, r.source, r.destination, o.operator_name 
         FROM buses b 
@@ -119,7 +118,6 @@ app.get("/api/buses", (req, res) => {
 
     let params = [fromCity, toCity];
 
-    // डायनॅमिक फिल्टर्स (जर फ्रंटएंडवरून आले असतील तर)
     if (busType) { sql += " AND b.bus_type = ?"; params.push(busType); }
     if (maxPrice) { sql += " AND b.price_per_seat <= ?"; params.push(maxPrice); }
     if (operator) { sql += " AND o.operator_name = ?"; params.push(operator); }
@@ -136,13 +134,8 @@ app.get("/api/buses", (req, res) => {
 // ==========================================
 // ४. SEATS API
 // ==========================================
-// ==========================================
-// ४. SEATS API
-// ==========================================
 app.get("/api/seats/:busId", (req, res) => {
     const { busId } = req.params;
-    
-    // ✅ 'Natural Sort' लॉजिक लावले आहे ज्यामुळे L1 नंतर L2 येईल, L10 नाही
     const sql = `
         SELECT * FROM seats 
         WHERE bus_id = ? 
@@ -163,8 +156,10 @@ app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
+    // ✅ सुधारलेले logic: userId मिळवण्यासाठी सर्व शक्यता तपासा
     const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
-                        ? bookingDetails.userId : 1; 
+                        ? bookingDetails.userId 
+                        : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
 
     const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
     const seatString = Array.isArray(bookingDetails.seats) ? bookingDetails.seats.join(',') : String(bookingDetails.seats);
@@ -198,7 +193,7 @@ app.post("/api/verify-payment", (req, res) => {
 // ==========================================
 app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
-    if (userId === "undefined" || userId === "null") userId = 1;
+    if (userId === "undefined" || userId === "null" || !userId) userId = 1;
 
     const sql = `
         SELECT bk.*, b.bus_name, b.travel_date, r.source, r.destination 
