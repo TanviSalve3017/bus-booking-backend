@@ -8,7 +8,7 @@ const moment = require("moment-timezone");
 
 const app = express();
 
-// ✅ CORS FIX: नेटलिफाय आणि लोकलहोस्ट दोन्हीसाठी परवानगी दिली आहे
+// ✅ CORS FIX: नेटलिफाय आणि लोकलहोस्ट दोन्हीसाठी सुरक्षित रित्या परवानगी
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -18,29 +18,43 @@ app.use(cors({
 
 app.use(express.json());
 
-const db = mysql.createConnection({
-  host: process.env.DB_HOST || "mysql-16a68106-bus-reservation-j.aivencloud.com",
-  user: process.env.DB_USER || "avnadmin",
-  password: process.env.DB_PASSWORD, 
-  database: process.env.DB_NAME || "defaultdb", 
-  port: process.env.DB_PORT || 23996, 
-  timezone: '+05:30',
-  ssl: {
-    rejectUnauthorized: false 
-  },
-  connectTimeout: 20000 
-});
+// ✅ DATABASE RECONNECTION LOGIC: Aiven कनेक्शन टिकवून ठेवण्यासाठी
+let db;
+function handleDisconnect() {
+    db = mysql.createConnection({
+        host: process.env.DB_HOST || "mysql-16a68106-bus-reservation-j.aivencloud.com",
+        user: process.env.DB_USER || "avnadmin",
+        password: process.env.DB_PASSWORD, 
+        database: process.env.DB_NAME || "defaultdb", 
+        port: process.env.DB_PORT || 23996, 
+        timezone: '+05:30',
+        ssl: { rejectUnauthorized: false },
+        connectTimeout: 20000 
+    });
 
-db.connect((err) => {
-    if (err) {
-        console.error("❌ Aiven Connection Error:", err.message);
-    } else {
-        console.log("✅ Database Connected Successfully via Aiven!");
-    }
-});
+    db.connect((err) => {
+        if (err) {
+            console.error("❌ Aiven Connection Error:", err.message);
+            setTimeout(handleDisconnect, 2000); // एरर आल्यास २ सेकंदाने पुन्हा प्रयत्न
+        } else {
+            console.log("✅ Database Connected Successfully via Aiven!");
+        }
+    });
+
+    db.on('error', (err) => {
+        console.error('🚨 Database Error:', err);
+        if (err.code === 'PROTOCOL_CONNECTION_LOST') {
+            handleDisconnect(); // कनेक्शन तुटले तर ऑटोमॅटिक रिस्टार्ट
+        } else {
+            throw err;
+        }
+    });
+}
+
+handleDisconnect();
 
 // ==========================================
-// १. REGISTER API (With role fix)
+// १. REGISTER API
 // ==========================================
 app.post("/api/register", (req, res) => {
     const { name, email, password, mobile } = req.body;
@@ -122,7 +136,6 @@ app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
     
     if (!bookingDetails) {
-        console.log("❌ No booking details received!");
         return res.status(400).json({ message: "No Data" });
     }
 
@@ -156,7 +169,6 @@ app.post("/api/verify-payment", (req, res) => {
         razorPayment
     ], (err, result) => {
         if (err) {
-            console.error("🚨 SQL Insert Error:", err.message);
             return res.status(500).json({ success: false, error: err.message });
         }
         
@@ -243,4 +255,4 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server running on Port ${PORT}`));
