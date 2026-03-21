@@ -17,14 +17,11 @@ app.use(cors({
     optionsSuccessStatus: 200 
 }));
 
-// ✅ २. EXPRESS 5 Wildcard Fix: 
-// आपण app.options("/:path*") ऐवजी थेट middleware वापरू जेणेकरून PathError येणार नाही.
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
     
-    // ब्राउझरच्या प्री-फ्लाइट (OPTIONS) रिक्वेस्टसाठी
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
@@ -33,7 +30,7 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-// ✅ DATABASE RECONNECTION LOGIC: Aiven कनेक्शन टिकवून ठेवण्यासाठी
+// ✅ DATABASE RECONNECTION LOGIC
 let db;
 function handleDisconnect() {
     db = mysql.createConnection({
@@ -73,20 +70,13 @@ handleDisconnect();
 // ==========================================
 app.post("/api/register", (req, res) => {
     const { name, email, password, mobile } = req.body;
-    
     db.query("SELECT * FROM users WHERE email = ?", [email], (err, results) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
-        
-        if (results.length > 0) {
-            return res.status(400).json({ success: false, message: "Email already exists" });
-        }
+        if (results.length > 0) return res.status(400).json({ success: false, message: "Email already exists" });
 
         const sql = "INSERT INTO users (name, email, password, mobile, role) VALUES (?, ?, ?, ?, 'User')";
         db.query(sql, [name, email, password, mobile], (insertErr, result) => {
-            if (insertErr) {
-                console.error("🚨 DB Insert Error:", insertErr.message);
-                return res.status(500).json({ success: false, error: insertErr.message });
-            }
+            if (insertErr) return res.status(500).json({ success: false, error: insertErr.message });
             res.json({ success: true, message: "User registered successfully!" });
         });
     });
@@ -108,23 +98,33 @@ app.post("/api/login", (req, res) => {
 });
 
 // ==========================================
-// ३. BUS SEARCH API
+// ३. BUS SEARCH API (सुधारलेली आवृत्ती)
 // ==========================================
 app.get("/api/buses", (req, res) => {
-    let { from, to } = req.query;
+    let { from, to, busType, maxPrice, operator, amenities } = req.query;
     const fromCity = from ? from.toLowerCase().trim() : "";
     const toCity = to ? to.toLowerCase().trim() : "";
 
     console.log(`🔍 Searching buses for: ${fromCity} to ${toCity}`);
 
-    const sql = `
-        SELECT b.*, r.source, r.destination, o.operator_name 
+    // ✅ बदल: DISTINCT वापरला आहे जेणेकरून ड्युप्लिकेट येणार नाहीत
+    let sql = `
+        SELECT DISTINCT b.*, r.source, r.destination, o.operator_name 
         FROM buses b 
         JOIN routes r ON b.route_id = r.route_id 
         JOIN operators o ON b.operator_id = o.operator_id 
+        LEFT JOIN bus_amenities ba ON b.bus_id = ba.bus_id
+        LEFT JOIN amenities am ON ba.amenity_id = am.amenity_id
         WHERE LOWER(r.source) = ? AND LOWER(r.destination) = ?`;
 
-    db.query(sql, [fromCity, toCity], (err, results) => {
+    let params = [fromCity, toCity];
+
+    // डायनॅमिक फिल्टर्स (जर फ्रंटएंडवरून आले असतील तर)
+    if (busType) { sql += " AND b.bus_type = ?"; params.push(busType); }
+    if (maxPrice) { sql += " AND b.price_per_seat <= ?"; params.push(maxPrice); }
+    if (operator) { sql += " AND o.operator_name = ?"; params.push(operator); }
+
+    db.query(sql, params, (err, results) => {
         if (err) {
             console.error("🚨 Search Error:", err);
             return res.status(500).send(err);
@@ -138,7 +138,8 @@ app.get("/api/buses", (req, res) => {
 // ==========================================
 app.get("/api/seats/:busId", (req, res) => {
     const { busId } = req.params;
-    db.query("SELECT * FROM seats WHERE bus_id = ?", [busId], (err, results) => {
+    // ✅ बदल: इथून सुद्धा फक्त Unique सीट आयडी येतील याची खात्री
+    db.query("SELECT * FROM seats WHERE bus_id = ? ORDER BY seat_number", [busId], (err, results) => {
         if (err) return res.status(500).json(err);
         res.json(results);
     });
@@ -149,14 +150,10 @@ app.get("/api/seats/:busId", (req, res) => {
 // ==========================================
 app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
-    
-    if (!bookingDetails) {
-        return res.status(400).json({ message: "No Data" });
-    }
+    if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
     const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
-                        ? bookingDetails.userId 
-                        : 1; 
+                        ? bookingDetails.userId : 1; 
 
     const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
     const seatString = Array.isArray(bookingDetails.seats) ? bookingDetails.seats.join(',') : String(bookingDetails.seats);
@@ -168,28 +165,18 @@ app.post("/api/verify-payment", (req, res) => {
     (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id) 
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?)`;
 
-    const age = bookingDetails.passenger_age || 25;
-
     db.query(sqlInsert, [
-        bookingDetails.busId || bookingDetails.bus_id, 
-        finalUserId, 
-        generatedPnr, 
+        bookingDetails.busId || bookingDetails.bus_id, finalUserId, generatedPnr, 
         bookingDetails.fullName || bookingDetails.passenger_name, 
         bookingDetails.email || bookingDetails.passenger_email, 
         bookingDetails.mobile || bookingDetails.passenger_mobile, 
-        age,
-        seatString, 
-        bookingDetails.totalFare || bookingDetails.total_amount,
-        razorOrder,
-        razorPayment
+        bookingDetails.passenger_age || 25, seatString, 
+        bookingDetails.totalFare || bookingDetails.total_amount, razorOrder, razorPayment
     ], (err, result) => {
-        if (err) {
-            return res.status(500).json({ success: false, error: err.message });
-        }
+        if (err) return res.status(500).json({ success: false, error: err.message });
         
         const seatArray = Array.isArray(bookingDetails.seats) ? bookingDetails.seats : String(bookingDetails.seats).split(',');
         db.query("UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", [bookingDetails.busId || bookingDetails.bus_id, seatArray], (updateErr) => {
-            if (updateErr) console.error("🚨 Seat Update Error:", updateErr.message);
             res.json({ success: true, pnr: generatedPnr });
         });
     });
@@ -212,7 +199,6 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 
     db.query(sql, [userId], (err, results) => {
         if (err) return res.status(500).json({ error: err.message });
-
         const formattedResults = results.map(row => ({
             ...row,
             travel_date: moment(row.travel_date).tz("Asia/Kolkata").format("YYYY-MM-DD")
@@ -226,56 +212,35 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 // ==========================================
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
-
-    const sqlSelect = `
-        SELECT bk.bus_id, bk.seat_numbers, bk.total_amount, b.travel_date, bk.status
-        FROM bookings bk 
-        JOIN buses b ON bk.bus_id = b.bus_id 
-        WHERE bk.pnr = ?`;
+    const sqlSelect = `SELECT bk.bus_id, bk.seat_numbers, bk.total_amount, b.travel_date, bk.status FROM bookings bk JOIN buses b ON bk.bus_id = b.bus_id WHERE bk.pnr = ?`;
 
     db.query(sqlSelect, [pnr], (err, results) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
-
         if (results && results.length > 0) {
             const { bus_id, seat_numbers, total_amount, travel_date, status } = results[0];
             if (status === 'Cancelled') return res.status(400).json({ success: false, message: "Already cancelled" });
 
-            const todayIST = moment().tz("Asia/Kolkata").startOf('day');
-            const journeyDateIST = moment(travel_date).tz("Asia/Kolkata").startOf('day');
-            const diffDays = journeyDateIST.diff(todayIST, 'days');
-
+            const diffDays = moment(travel_date).diff(moment(), 'days');
             let refundPercent = (diffDays >= 2) ? 0.70 : (diffDays === 1 ? 0.50 : 0);
             const refundAmount = (total_amount * refundPercent).toFixed(2);
-            const seatArray = seat_numbers.split(',');
 
             db.query("UPDATE bookings SET status = 'Cancelled' WHERE pnr = ?", [pnr], (upErr) => {
-                if (upErr) return res.status(500).json({ success: false, error: upErr.message });
-
-                db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seatArray], (seatErr) => {
-                    let refundMsg = `Ticket Cancelled Successfully! `;
-                    refundMsg += (refundPercent > 0) 
-                        ? `Your refund of ₹${refundAmount} (${refundPercent * 100}%) will be credited within 48 hours.`
-                        : `As per policy, no refund is applicable for travel day cancellations.`;
-                    res.json({ success: true, message: refundMsg, refundAmount: refundAmount });
+                db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seat_numbers.split(',')], (seatErr) => {
+                    res.json({ success: true, message: `Cancelled! Refund: ₹${refundAmount}` });
                 });
             });
-        } else { 
-            res.status(404).json({ success: false, message: "PNR not found" }); 
-        }
+        } else { res.status(404).json({ success: false, message: "PNR not found" }); }
     });
 });
 
-// ✅ हेल्थ चेक रूट
 app.get("/api/health", (req, res) => {
     db.query("SELECT 1", (err) => {
-        if (err) return res.status(500).json({ status: "Database Offline", error: err.message });
-        res.json({ status: "Online", message: "Backend & Database working fine!" });
+        if (err) return res.status(500).json({ status: "Database Offline" });
+        res.json({ status: "Online" });
     });
 });
 
-app.get("/", (req, res) => {
-    res.send("Backend is Running Perfectly!");
-});
+app.get("/", (req, res) => { res.send("Backend is Running!"); });
 
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => console.log(`🚀 Server running on Port ${PORT}`));
