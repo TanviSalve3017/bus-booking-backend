@@ -9,15 +9,24 @@ const moment = require("moment-timezone");
 const app = express();
 
 // ✅ १. सर्वात आधी CORS सेटअप
+const allowedOrigins = [
+    "http://localhost:3000",
+    "https://bus-booking-system-7pfon42lo-tanvisalve3017s-projects.vercel.app"
+];
+
 app.use(cors({
-     origin: [
-        "http://localhost:3000",
-        "https://bus-booking-system-6omn8z1ud-tanvisalve3017s-projects.vercel.app"
-    ],
+    origin: function (origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error("CORS not allowed"));
+        }
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
-    credentials: true,
+    credentials: true
 }));
+
+app.options("*", cors()); // 🔥 VERY IMPORTANT (preflight fix)
 
 app.use(express.json());
 
