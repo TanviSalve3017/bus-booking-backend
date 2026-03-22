@@ -92,16 +92,30 @@ app.post("/api/login", (req, res) => {
     });
 });
 
-// API 3: BUS SEARCH
+// API 3: BUS SEARCH (Added date filter logic)
 app.get("/api/buses", (req, res) => {
-    let { from, to, busType, maxPrice, operator } = req.query;
+    let { from, to, date, busType, maxPrice, operator } = req.query;
     const fromCity = from ? from.toLowerCase().trim() : "";
     const toCity = to ? to.toLowerCase().trim() : "";
-    let sql = `SELECT DISTINCT b.*, r.source, r.destination, o.operator_name FROM buses b JOIN routes r ON b.route_id = r.route_id JOIN operators o ON b.operator_id = o.operator_id WHERE LOWER(r.source) = ? AND LOWER(r.destination) = ?`;
+    
+    let sql = `SELECT DISTINCT b.*, r.source, r.destination, o.operator_name 
+               FROM buses b 
+               JOIN routes r ON b.route_id = r.route_id 
+               JOIN operators o ON b.operator_id = o.operator_id 
+               WHERE LOWER(r.source) = ? AND LOWER(r.destination) = ?`;
+    
     let params = [fromCity, toCity];
+
+    // जर युजरने तारीख पाठवली असेल तर त्या तारखेच्याच बसेस दाखवा
+    if (date) {
+        sql += " AND b.travel_date = ?";
+        params.push(date);
+    }
+
     if (busType) { sql += " AND b.bus_type = ?"; params.push(busType); }
     if (maxPrice) { sql += " AND b.price_per_seat <= ?"; params.push(maxPrice); }
     if (operator) { sql += " AND o.operator_name = ?"; params.push(operator); }
+    
     db.query(sql, params, (err, results) => {
         if (err) return res.status(500).send(err);
         res.json(results);
@@ -117,7 +131,7 @@ app.get("/api/seats/:busId", (req, res) => {
     });
 });
 
-// API 5: VERIFY PAYMENT & SAVE BOOKING (FIXED DATE LOGIC)
+// API 5: VERIFY PAYMENT & SAVE BOOKING (FIXED DATE PRIORITY)
 app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
@@ -128,10 +142,11 @@ app.post("/api/verify-payment", (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!busResult.length) return res.status(400).json({ error: "Bus not found" });
 
-        // 🔥 सुधारलेले तारीख लॉजिक: युजरने निवडलेली तारीख (journeyDate) आधी तपासा
-        // जर ती नसेल तरच डेटाबेसची डिफॉल्ट तारीख वापरा.
-        let finalTravelDate = (bookingDetails.journeyDate || bookingDetails.travel_date || busResult[0].travel_date);
-        finalTravelDate = moment(finalTravelDate).format("YYYY-MM-DD");
+        // 🔥 सुधारलेले तारीख लॉजिक: 
+        // युजरने फ्रंटएंडवरून पाठवलेली 'journeyDate' किंवा 'travel_date' आधी वापरा.
+        // ती नसेल तरच डेटाबेसची डिफॉल्ट तारीख घ्या.
+        let rawDate = bookingDetails.journeyDate || bookingDetails.travel_date || busResult[0].travel_date;
+        let finalTravelDate = moment(rawDate).format("YYYY-MM-DD");
 
         const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
                             ? bookingDetails.userId : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
@@ -156,8 +171,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
             razorOrder, razorPayment, finalTravelDate 
         ], (err) => {
             if (err) return res.status(500).json({ success: false, error: err.message });
+            
+            // सीट स्टेटस अपडेट (यामध्ये आता सीट लॉजिक तसेच ठेवले आहे)
             db.query("UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", [busId, seatString.split(',')], () => {
-                res.json({ success: true, pnr: generatedPnr });
+                res.json({ success: true, pnr: generatedPnr, travelDate: finalTravelDate });
             });
         });
     });
@@ -167,7 +184,15 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
 app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
     if (userId === "undefined" || userId === "null" || !userId) userId = 1;
-    const sql = `SELECT bk.*, b.bus_name, b.travel_date as bus_travel_date, r.source, r.destination FROM bookings bk JOIN buses b ON bk.bus_id = b.bus_id JOIN routes r ON b.route_id = r.route_id WHERE bk.user_id = ? ORDER BY bk.booking_date DESC`;
+    
+    // या क्वेरीमध्ये आपण आता bk.travel_date (बुकिंगची तारीख) वापरत आहोत, b.travel_date (बसची मूळ तारीख) नाही.
+    const sql = `SELECT bk.*, b.bus_name, bk.travel_date as travel_date, r.source, r.destination 
+                 FROM bookings bk 
+                 JOIN buses b ON bk.bus_id = b.bus_id 
+                 JOIN routes r ON b.route_id = r.route_id 
+                 WHERE bk.user_id = ? 
+                 ORDER BY bk.booking_date DESC`;
+                 
     db.query(sql, [userId], (err, results) => {
         if (err) return res.status(500).json({ error: err.message });
         const formattedResults = results.map(row => ({
