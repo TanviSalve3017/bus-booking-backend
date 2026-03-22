@@ -8,18 +8,27 @@ const moment = require("moment-timezone");
 
 const app = express();
 
-// ✅ १. सर्वात आधी CORS सेटअप
+// ✅ १. सुधारित CORS सेटिंग (सर्व Vercel URLs आणि Localhost साठी)
 app.use(cors({
-     origin: [
-        "http://localhost:3000",
-        "https://bus-booking-system-6omn8z1ud-tanvisalve3017s-projects.vercel.app"
-    ],
+    origin: function (origin, callback) {
+        // जर ओरिजिन नसेल (उदा. मोबाईल ॲप) किंवा ते vercel.app / localhost असेल तर परवानगी द्या
+        if (!origin || 
+            origin.includes("vercel.app") || 
+            origin.includes("localhost") ||
+            origin.includes("http://localhost:3000") ||
+            origin.includes("http://localhost:5001")) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
     credentials: true,
     optionsSuccessStatus: 200 
 }));
 
+// CORS Headers Middleware (Double Safety)
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -43,7 +52,7 @@ function handleDisconnect() {
         database: process.env.DB_NAME || "defaultdb", 
         port: process.env.DB_PORT || 23996, 
         timezone: '+05:30',
-        dateStrings: true, // 🔥 बदल १: यामुळे DB मधून तारीख जशी आहे तशी String स्वरूपात मिळेल (Timezone घोळ थांबेल)
+        dateStrings: true, 
         ssl: { rejectUnauthorized: false },
         connectTimeout: 20000 
     });
@@ -151,11 +160,8 @@ app.post("/api/verify-payment", (req, res) => {
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
     const busId = bookingDetails.busId || bookingDetails.bus_id;
-    const selectedTravelDate = bookingDetails.travel_date || bookingDetails.travelDate;
 
-console.log("🔥 USER SELECTED DATE:", selectedTravelDate);
-
-    // 🔥 STEP 1: buses table मधून REAL travel_date काढ
+    // STEP 1: buses table मधून REAL travel_date काढ
     db.query("SELECT travel_date FROM buses WHERE bus_id = ?", [busId], (err, busResult) => {
         if (err) return res.status(500).json({ error: err.message });
 
@@ -163,7 +169,8 @@ console.log("🔥 USER SELECTED DATE:", selectedTravelDate);
             return res.status(400).json({ error: "Bus not found" });
         }
 
-       const actualTravelDate = busResult[0].travel_date;
+        // ✅ फिक्स: वेरिएबलचं नाव बरोबर केलं जेणेकरून 'finalTravelDate' खाली मिळेल
+        const finalTravelDate = busResult[0].travel_date;
 
         const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
                             ? bookingDetails.userId 
@@ -179,18 +186,18 @@ console.log("🔥 USER SELECTED DATE:", selectedTravelDate);
 (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
 
-       db.query(sqlInsert, [
-    busId, finalUserId, generatedPnr, 
-    bookingDetails.fullName || bookingDetails.passenger_name, 
-    bookingDetails.email || bookingDetails.passenger_email, 
-    bookingDetails.mobile || bookingDetails.passenger_mobile, 
-    bookingDetails.passenger_age || 25, 
-    seatString, 
-    bookingDetails.totalFare || bookingDetails.total_amount, 
-    razorOrder, 
-    razorPayment,
-    finalTravelDate   // 🔥 स्ट्रिंग फॉरमॅटमध्ये तारीख पाठवा
-], (err, result) => {
+        db.query(sqlInsert, [
+            busId, finalUserId, generatedPnr, 
+            bookingDetails.fullName || bookingDetails.passenger_name, 
+            bookingDetails.email || bookingDetails.passenger_email, 
+            bookingDetails.mobile || bookingDetails.passenger_mobile, 
+            bookingDetails.passenger_age || 25, 
+            seatString, 
+            bookingDetails.totalFare || bookingDetails.total_amount, 
+            razorOrder, 
+            razorPayment,
+            finalTravelDate   // ✅ आता ही तारीख बरोबर सेव्ह होईल
+        ], (err, result) => {
             if (err) return res.status(500).json({ success: false, error: err.message });
             
             const seatArray = seatString.split(',');
@@ -204,7 +211,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
 });
 
 // ==========================================
-// ६. GET MY BOOKINGS (सुधारित तारीख लॉजिक)
+// ६. GET MY BOOKINGS
 // ==========================================
 app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
@@ -222,7 +229,6 @@ app.get("/api/my-bookings/:userId", (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         const formattedResults = results.map(row => ({
             ...row,
-            // 🔥 बदल २: moment वापरून तारीख न बदलता फक्त फॉरमॅट करणे
             travel_date: moment(row.travel_date).format("YYYY-MM-DD")
         }));
         res.json(formattedResults);
@@ -231,7 +237,7 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 
 
 // ==========================================
-// ७. CANCEL TICKET (सुधारित कॅल्क्युलेशन)
+// ७. CANCEL TICKET
 // ==========================================
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
@@ -255,17 +261,12 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
             return res.status(400).json({ success: false, message: "Already cancelled" });
         }
 
-        // 🔥 बदल ३: अचूक वेळेचा फरक काढण्यासाठी moment.tz वापरला आहे
-        // आपण प्रवासाच्या दिवशी सकाळी ९ वाजताची वेळ गृहीत धरतोय
         const journeyTime = moment.tz(travel_date, "YYYY-MM-DD", "Asia/Kolkata").startOf('day').add(9, 'hours').valueOf();
         const currentTime = moment().tz("Asia/Kolkata").valueOf();
 
         const diffInHours = (journeyTime - currentTime) / (1000 * 60 * 60);
 
-        console.log(`🔥 PNR: ${pnr} | Hours Left: ${diffInHours}`);
-
         let refundPercent = 0;
-
         if (diffInHours >= 24) {
             refundPercent = 0.70;
         } else if (diffInHours >= 12) {
