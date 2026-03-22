@@ -160,7 +160,7 @@ console.log("🔥 USER SELECTED DATE:", selectedTravelDate);
             return res.status(400).json({ error: "Bus not found" });
         }
 
-        const actualTravelDate = busResult[0].travel_date; // ही तारीख String स्वरूपात मिळेल
+       const actualTravelDate = busResult[0].travel_date;
 
         const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
                             ? bookingDetails.userId 
@@ -186,8 +186,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
     bookingDetails.totalFare || bookingDetails.total_amount, 
     razorOrder, 
     razorPayment,
-    actualTravelDate   // 🔥 हे ADD कर
-        ], (err, result) => {
+    finalTravelDate   // 🔥 स्ट्रिंग फॉरमॅटमध्ये तारीख पाठवा
+], (err, result) => {
             if (err) return res.status(500).json({ success: false, error: err.message });
             
             const seatArray = seatString.split(',');
@@ -254,7 +254,7 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
 
         // 🔥 बदल ३: अचूक वेळेचा फरक काढण्यासाठी moment.tz वापरला आहे
         // आपण प्रवासाच्या दिवशी सकाळी ९ वाजताची वेळ गृहीत धरतोय
-        const journeyTime = moment.tz(travel_date, "Asia/Kolkata").startOf('day').add(9, 'hours').valueOf();
+        const journeyTime = moment.tz(travel_date, "YYYY-MM-DD", "Asia/Kolkata").startOf('day').add(9, 'hours').valueOf();
         const currentTime = moment().tz("Asia/Kolkata").valueOf();
 
         const diffInHours = (journeyTime - currentTime) / (1000 * 60 * 60);
