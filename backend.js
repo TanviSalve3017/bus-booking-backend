@@ -40,6 +40,7 @@ function handleDisconnect() {
         database: process.env.DB_NAME || "defaultdb", 
         port: process.env.DB_PORT || 23996, 
         timezone: '+05:30',
+        dateStrings: true, // 🔥 बदल १: यामुळे DB मधून तारीख जशी आहे तशी String स्वरूपात मिळेल (Timezone घोळ थांबेल)
         ssl: { rejectUnauthorized: false },
         connectTimeout: 20000 
     });
@@ -144,9 +145,6 @@ app.get("/api/seats/:busId", (req, res) => {
 app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
 
-    console.log("🧠 Incoming bookingDetails:", bookingDetails);
-    console.log("🧠 Incoming travel date (frontend):", bookingDetails?.travel_date);
-
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
     const busId = bookingDetails.busId || bookingDetails.bus_id;
@@ -159,9 +157,7 @@ app.post("/api/verify-payment", (req, res) => {
             return res.status(400).json({ error: "Bus not found" });
         }
 
-        const actualTravelDate = busResult[0].travel_date;
-
-        console.log("🔥 DB travel_date:", actualTravelDate);
+        const actualTravelDate = busResult[0].travel_date; // ही तारीख String स्वरूपात मिळेल
 
         const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
                             ? bookingDetails.userId 
@@ -198,7 +194,7 @@ app.post("/api/verify-payment", (req, res) => {
 });
 
 // ==========================================
-// ६. GET MY BOOKINGS 
+// ६. GET MY BOOKINGS (सुधारित तारीख लॉजिक)
 // ==========================================
 app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
@@ -216,7 +212,8 @@ app.get("/api/my-bookings/:userId", (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         const formattedResults = results.map(row => ({
             ...row,
-            travel_date: moment(row.travel_date).tz("Asia/Kolkata").format("YYYY-MM-DD")
+            // 🔥 बदल २: moment वापरून तारीख न बदलता फक्त फॉरमॅट करणे
+            travel_date: moment(row.travel_date).format("YYYY-MM-DD")
         }));
         res.json(formattedResults);
     });
@@ -224,7 +221,7 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 
 
 // ==========================================
-// ७. CANCEL TICKET
+// ७. CANCEL TICKET (सुधारित कॅल्क्युलेशन)
 // ==========================================
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
@@ -244,19 +241,18 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
 
         const { bus_id, seat_numbers, total_amount, travel_date, status } = results[0];
 
-        console.log("🧠 Cancel travel_date:", travel_date);
-
         if (status === 'Cancelled') {
             return res.status(400).json({ success: false, message: "Already cancelled" });
         }
 
-        // 🔥 FIXED TIMEZONE LOGIC
-        const journeyTime = moment.tz(travel_date, "Asia/Kolkata").valueOf();
+        // 🔥 बदल ३: अचूक वेळेचा फरक काढण्यासाठी moment.tz वापरला आहे
+        // आपण प्रवासाच्या दिवशी सकाळी ९ वाजताची वेळ गृहीत धरतोय
+        const journeyTime = moment.tz(travel_date, "Asia/Kolkata").startOf('day').add(9, 'hours').valueOf();
         const currentTime = moment().tz("Asia/Kolkata").valueOf();
 
         const diffInHours = (journeyTime - currentTime) / (1000 * 60 * 60);
 
-        console.log(`🔥 Hours Left: ${diffInHours}`);
+        console.log(`🔥 PNR: ${pnr} | Hours Left: ${diffInHours}`);
 
         let refundPercent = 0;
 
