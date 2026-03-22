@@ -30,7 +30,7 @@ app.use(cors({
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    res.header("Access-Control-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
     if (req.method === 'OPTIONS') return res.sendStatus(200);
     next();
 });
@@ -92,7 +92,7 @@ app.post("/api/login", (req, res) => {
     });
 });
 
-// API 3: BUS SEARCH (Added date filter logic)
+// API 3: BUS SEARCH 
 app.get("/api/buses", (req, res) => {
     let { from, to, date, busType, maxPrice, operator } = req.query;
     const fromCity = from ? from.toLowerCase().trim() : "";
@@ -106,7 +106,6 @@ app.get("/api/buses", (req, res) => {
     
     let params = [fromCity, toCity];
 
-    // जर युजरने तारीख पाठवली असेल तर त्या तारखेच्याच बसेस दाखवा
     if (date) {
         sql += " AND b.travel_date = ?";
         params.push(date);
@@ -131,22 +130,24 @@ app.get("/api/seats/:busId", (req, res) => {
     });
 });
 
-// API 5: VERIFY PAYMENT & SAVE BOOKING (FIXED DATE PRIORITY)
+// API 5: VERIFY PAYMENT & SAVE BOOKING (FIXED DATE LOGIC)
 app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
     const busId = bookingDetails.busId || bookingDetails.bus_id;
 
+    // 🔥 सर्वात महत्त्वाचा बदल: 
+    // आधी चेक करा की फ्रंटएंडने निवडलेली तारीख (22, 26 इ.) पाठवली आहे का.
+    // ती असेल तर तीच फायनल मानायची.
+    const userDate = bookingDetails.travelDate || bookingDetails.journeyDate || bookingDetails.travel_date;
+
     db.query("SELECT travel_date FROM buses WHERE bus_id = ?", [busId], (err, busResult) => {
         if (err) return res.status(500).json({ error: err.message });
-        if (!busResult.length) return res.status(400).json({ error: "Bus not found" });
-
-        // 🔥 सुधारलेले तारीख लॉजिक: 
-        // युजरने फ्रंटएंडवरून पाठवलेली 'journeyDate' किंवा 'travel_date' आधी वापरा.
-        // ती नसेल तरच डेटाबेसची डिफॉल्ट तारीख घ्या.
-        let rawDate = bookingDetails.journeyDate || bookingDetails.travel_date || busResult[0].travel_date;
-        let finalTravelDate = moment(rawDate).format("YYYY-MM-DD");
+        
+        // जर युजरने तारीख पाठवली असेल तर तीच वापरा, नसेल तर डेटाबेसमधली वापरा.
+        let finalTravelDate = userDate ? moment(userDate).format("YYYY-MM-DD") : 
+                             (busResult.length > 0 ? moment(busResult[0].travel_date).format("YYYY-MM-DD") : moment().format("YYYY-MM-DD"));
 
         const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
                             ? bookingDetails.userId : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
@@ -172,7 +173,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
         ], (err) => {
             if (err) return res.status(500).json({ success: false, error: err.message });
             
-            // सीट स्टेटस अपडेट (यामध्ये आता सीट लॉजिक तसेच ठेवले आहे)
             db.query("UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", [busId, seatString.split(',')], () => {
                 res.json({ success: true, pnr: generatedPnr, travelDate: finalTravelDate });
             });
@@ -185,7 +185,6 @@ app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
     if (userId === "undefined" || userId === "null" || !userId) userId = 1;
     
-    // या क्वेरीमध्ये आपण आता bk.travel_date (बुकिंगची तारीख) वापरत आहोत, b.travel_date (बसची मूळ तारीख) नाही.
     const sql = `SELECT bk.*, b.bus_name, bk.travel_date as travel_date, r.source, r.destination 
                  FROM bookings bk 
                  JOIN buses b ON bk.bus_id = b.bus_id 
