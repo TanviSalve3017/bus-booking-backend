@@ -143,35 +143,56 @@ app.get("/api/seats/:busId", (req, res) => {
 // ==========================================
 app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
+
+    console.log("🧠 Incoming bookingDetails:", bookingDetails);
+    console.log("🧠 Incoming travel date (frontend):", bookingDetails?.travel_date);
+
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
-    const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
-                        ? bookingDetails.userId 
-                        : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
+    const busId = bookingDetails.busId || bookingDetails.bus_id;
 
-    const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
-    const seatString = Array.isArray(bookingDetails.seats) ? bookingDetails.seats.join(',') : String(bookingDetails.seats);
+    // 🔥 STEP 1: buses table मधून REAL travel_date काढ
+    db.query("SELECT travel_date FROM buses WHERE bus_id = ?", [busId], (err, busResult) => {
+        if (err) return res.status(500).json({ error: err.message });
 
-    const razorOrder = bookingDetails.razorpayOrderId || "RZP_ORD_" + Date.now();
-    const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
+        if (!busResult.length) {
+            return res.status(400).json({ error: "Bus not found" });
+        }
 
-    const sqlInsert = `INSERT INTO bookings 
-    (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?)`;
+        const actualTravelDate = busResult[0].travel_date;
 
-    db.query(sqlInsert, [
-        bookingDetails.busId || bookingDetails.bus_id, finalUserId, generatedPnr, 
-        bookingDetails.fullName || bookingDetails.passenger_name, 
-        bookingDetails.email || bookingDetails.passenger_email, 
-        bookingDetails.mobile || bookingDetails.passenger_mobile, 
-        bookingDetails.passenger_age || 25, seatString, 
-        bookingDetails.totalFare || bookingDetails.total_amount, razorOrder, razorPayment
-    ], (err, result) => {
-        if (err) return res.status(500).json({ success: false, error: err.message });
-        
-        const seatArray = seatString.split(',');
-        db.query("UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", [bookingDetails.busId || bookingDetails.bus_id, seatArray], () => {
-            res.json({ success: true, pnr: generatedPnr });
+        console.log("🔥 DB travel_date:", actualTravelDate);
+
+        const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
+                            ? bookingDetails.userId 
+                            : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
+
+        const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
+        const seatString = Array.isArray(bookingDetails.seats) ? bookingDetails.seats.join(',') : String(bookingDetails.seats);
+
+        const razorOrder = bookingDetails.razorpayOrderId || "RZP_ORD_" + Date.now();
+        const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
+
+        const sqlInsert = `INSERT INTO bookings 
+        (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?)`;
+
+        db.query(sqlInsert, [
+            busId, finalUserId, generatedPnr, 
+            bookingDetails.fullName || bookingDetails.passenger_name, 
+            bookingDetails.email || bookingDetails.passenger_email, 
+            bookingDetails.mobile || bookingDetails.passenger_mobile, 
+            bookingDetails.passenger_age || 25, seatString, 
+            bookingDetails.totalFare || bookingDetails.total_amount, razorOrder, razorPayment
+        ], (err, result) => {
+            if (err) return res.status(500).json({ success: false, error: err.message });
+            
+            const seatArray = seatString.split(',');
+
+            db.query("UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", 
+            [busId, seatArray], () => {
+                res.json({ success: true, pnr: generatedPnr });
+            });
         });
     });
 });
@@ -201,56 +222,64 @@ app.get("/api/my-bookings/:userId", (req, res) => {
     });
 });
 
+
 // ==========================================
-// ७. CANCEL TICKET (अचूक तासांवर आधारित लॉजिक)
+// ७. CANCEL TICKET
 // ==========================================
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
-    const sqlSelect = `SELECT bk.bus_id, bk.seat_numbers, bk.total_amount, b.travel_date, bk.status FROM bookings bk JOIN buses b ON bk.bus_id = b.bus_id WHERE bk.pnr = ?`;
+
+    const sqlSelect = `
+    SELECT bk.bus_id, bk.seat_numbers, bk.total_amount, b.travel_date, bk.status 
+    FROM bookings bk 
+    JOIN buses b ON bk.bus_id = b.bus_id 
+    WHERE bk.pnr = ?`;
 
     db.query(sqlSelect, [pnr], (err, results) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
-        if (results && results.length > 0) {
-            const { bus_id, seat_numbers, total_amount, travel_date, status } = results[0];
-            
-            if (status === 'Cancelled') return res.status(400).json({ success: false, message: "आधीच कॅन्सल झाले आहे." });
 
-            // १. प्रवासाची वेळ आणि सध्याची वेळ मिलीसेकंदमध्ये मिळवा
-            const journeyTime = new Date(travel_date).getTime();
-            const currentTime = new Date().getTime();
+        if (!results.length) {
+            return res.status(404).json({ success: false, message: "PNR not found" });
+        }
 
-            // २. तासांमधील फरक काढा (Milliseconds to Hours)
-            const diffInHours = (journeyTime - currentTime) / (1000 * 60 * 60);
+        const { bus_id, seat_numbers, total_amount, travel_date, status } = results[0];
 
-            console.log(`PNR: ${pnr} | Hours Left: ${diffInHours.toFixed(2)}`);
+        console.log("🧠 Cancel travel_date:", travel_date);
 
-            let refundPercent = 0;
+        if (status === 'Cancelled') {
+            return res.status(400).json({ success: false, message: "Already cancelled" });
+        }
 
-            // पॉलिसीनुसार रिफंड ठरवा
-            if (diffInHours >= 24) {
-                refundPercent = 0.70; // २४ तासांपेक्षा जास्त वेळ: ७०%
-            } else if (diffInHours >= 12) {
-                refundPercent = 0.50; // १२ ते २४ तास: ५०%
-            } else {
-                refundPercent = 0;    // १२ तासांपेक्षा कमी: ०%
-            }
+        // 🔥 FIXED TIMEZONE LOGIC
+        const journeyTime = moment.tz(travel_date, "Asia/Kolkata").valueOf();
+        const currentTime = moment().tz("Asia/Kolkata").valueOf();
 
-            const refundAmount = (total_amount * refundPercent).toFixed(2);
+        const diffInHours = (journeyTime - currentTime) / (1000 * 60 * 60);
 
-            db.query("UPDATE bookings SET status = 'Cancelled' WHERE pnr = ?", [pnr], (upErr) => {
-                if (upErr) return res.status(500).json({ success: false, error: upErr.message });
-                
-                db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seat_numbers.split(',')], (seatErr) => {
-                    res.json({ 
-                        success: true, 
-                        message: `Cancelled! Refund: ₹${refundAmount}`,
-                        refundAmount: refundAmount 
-                    });
+        console.log(`🔥 Hours Left: ${diffInHours}`);
+
+        let refundPercent = 0;
+
+        if (diffInHours >= 24) {
+            refundPercent = 0.70;
+        } else if (diffInHours >= 12) {
+            refundPercent = 0.50;
+        } else {
+            refundPercent = 0;
+        }
+
+        const refundAmount = (total_amount * refundPercent).toFixed(2);
+
+        db.query("UPDATE bookings SET status = 'Cancelled' WHERE pnr = ?", [pnr], () => {
+            db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", 
+            [bus_id, seat_numbers.split(',')], () => {
+                res.json({ 
+                    success: true, 
+                    message: `Cancelled! Refund: ₹${refundAmount}`,
+                    refundAmount 
                 });
             });
-        } else { 
-            res.status(404).json({ success: false, message: "PNR सापडला नाही." }); 
-        }
+        });
     });
 });
 
