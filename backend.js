@@ -148,6 +148,9 @@ app.post("/api/verify-payment", (req, res) => {
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
     const busId = bookingDetails.busId || bookingDetails.bus_id;
+    const selectedTravelDate = bookingDetails.travel_date || bookingDetails.travelDate;
+
+console.log("🔥 USER SELECTED DATE:", selectedTravelDate);
 
     // 🔥 STEP 1: buses table मधून REAL travel_date काढ
     db.query("SELECT travel_date FROM buses WHERE bus_id = ?", [busId], (err, busResult) => {
@@ -170,16 +173,20 @@ app.post("/api/verify-payment", (req, res) => {
         const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
 
         const sqlInsert = `INSERT INTO bookings 
-        (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?)`;
+(bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
 
-        db.query(sqlInsert, [
-            busId, finalUserId, generatedPnr, 
-            bookingDetails.fullName || bookingDetails.passenger_name, 
-            bookingDetails.email || bookingDetails.passenger_email, 
-            bookingDetails.mobile || bookingDetails.passenger_mobile, 
-            bookingDetails.passenger_age || 25, seatString, 
-            bookingDetails.totalFare || bookingDetails.total_amount, razorOrder, razorPayment
+       db.query(sqlInsert, [
+    busId, finalUserId, generatedPnr, 
+    bookingDetails.fullName || bookingDetails.passenger_name, 
+    bookingDetails.email || bookingDetails.passenger_email, 
+    bookingDetails.mobile || bookingDetails.passenger_mobile, 
+    bookingDetails.passenger_age || 25, 
+    seatString, 
+    bookingDetails.totalFare || bookingDetails.total_amount, 
+    razorOrder, 
+    razorPayment,
+    actualTravelDate   // 🔥 हे ADD कर
         ], (err, result) => {
             if (err) return res.status(500).json({ success: false, error: err.message });
             
