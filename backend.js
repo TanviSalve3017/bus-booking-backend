@@ -11,7 +11,6 @@ const app = express();
 // ✅ १. सुधारित CORS सेटिंग (सर्व Vercel URLs आणि Localhost साठी)
 app.use(cors({
     origin: function (origin, callback) {
-        // जर ओरिजिन नसेल (उदा. मोबाईल ॲप) किंवा ते vercel.app / localhost असेल तर परवानगी द्या
         if (!origin || 
             origin.includes("vercel.app") || 
             origin.includes("localhost") ||
@@ -51,8 +50,8 @@ function handleDisconnect() {
         password: process.env.DB_PASSWORD, 
         database: process.env.DB_NAME || "defaultdb", 
         port: process.env.DB_PORT || 23996, 
-        timezone: '+05:30',
-        dateStrings: true, 
+        timezone: '+05:30', // 🔥 भारतीय प्रमाणवेळ
+        dateStrings: true,  // 🔥 तारीख String स्वरूपात ठेवण्यासाठी
         ssl: { rejectUnauthorized: false },
         connectTimeout: 20000 
     });
@@ -161,7 +160,6 @@ app.post("/api/verify-payment", (req, res) => {
 
     const busId = bookingDetails.busId || bookingDetails.bus_id;
 
-    // STEP 1: buses table मधून REAL travel_date काढ
     db.query("SELECT travel_date FROM buses WHERE bus_id = ?", [busId], (err, busResult) => {
         if (err) return res.status(500).json({ error: err.message });
 
@@ -169,8 +167,8 @@ app.post("/api/verify-payment", (req, res) => {
             return res.status(400).json({ error: "Bus not found" });
         }
 
-        // ✅ फिक्स: वेरिएबलचं नाव बरोबर केलं जेणेकरून 'finalTravelDate' खाली मिळेल
-        const finalTravelDate = busResult[0].travel_date;
+        // ✅ तारीख जशी आहे तशीच String फॉरमॅटमध्ये घेणे (00:00:00 गोंधळ टाळण्यासाठी)
+        const finalTravelDate = String(busResult[0].travel_date).split(' ')[0];
 
         const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
                             ? bookingDetails.userId 
@@ -196,7 +194,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
             bookingDetails.totalFare || bookingDetails.total_amount, 
             razorOrder, 
             razorPayment,
-            finalTravelDate   // ✅ आता ही तारीख बरोबर सेव्ह होईल
+            finalTravelDate 
         ], (err, result) => {
             if (err) return res.status(500).json({ success: false, error: err.message });
             
@@ -211,14 +209,14 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
 });
 
 // ==========================================
-// ६. GET MY BOOKINGS
+// ६. GET MY BOOKINGS (तारीख फिक्स सह)
 // ==========================================
 app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
     if (userId === "undefined" || userId === "null" || !userId) userId = 1;
 
     const sql = `
-        SELECT bk.*, b.bus_name, b.travel_date, r.source, r.destination 
+        SELECT bk.*, b.bus_name, b.travel_date as bus_travel_date, r.source, r.destination 
         FROM bookings bk
         JOIN buses b ON bk.bus_id = b.bus_id
         JOIN routes r ON b.route_id = r.route_id
@@ -227,14 +225,15 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 
     db.query(sql, [userId], (err, results) => {
         if (err) return res.status(500).json({ error: err.message });
+        
         const formattedResults = results.map(row => ({
             ...row,
-            travel_date: moment(row.travel_date).format("YYYY-MM-DD")
+            // 🔥 moment ऐवजी साध्या String पद्धतीने तारीख काढली जेणेकरून Timezone मुळे ती बदलणार नाही
+            travel_date: String(row.travel_date).split(' ')[0]
         }));
         res.json(formattedResults);
     });
 });
-
 
 // ==========================================
 // ७. CANCEL TICKET
