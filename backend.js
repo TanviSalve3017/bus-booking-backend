@@ -8,7 +8,7 @@ const moment = require("moment-timezone");
 
 const app = express();
 
-// ✅ १. सुधारित CORS सेटिंग (सर्व Vercel URLs आणि Localhost साठी)
+// ✅ १. सुधारित CORS सेटिंग
 app.use(cors({
     origin: function (origin, callback) {
         if (!origin || 
@@ -50,23 +50,22 @@ function handleDisconnect() {
         password: process.env.DB_PASSWORD, 
         database: process.env.DB_NAME || "defaultdb", 
         port: process.env.DB_PORT || 23996, 
-        timezone: '+05:30', // 🔥 भारतीय प्रमाणवेळ
-        dateStrings: true,  // 🔥 तारीख String स्वरूपात ठेवण्यासाठी
+        timezone: '+05:30', 
+        dateStrings: true,  
         ssl: { rejectUnauthorized: false },
         connectTimeout: 20000 
     });
 
     db.connect((err) => {
         if (err) {
-            console.error("❌ Aiven Connection Error:", err.message);
+            console.error("❌ Connection Error:", err.message);
             setTimeout(handleDisconnect, 2000); 
         } else {
-            console.log("✅ Database Connected Successfully via Aiven!");
+            console.log("✅ Database Connected via Aiven!");
         }
     });
 
     db.on('error', (err) => {
-        console.error('🚨 Database Error:', err);
         if (err.code === 'PROTOCOL_CONNECTION_LOST') {
             handleDisconnect(); 
         } else {
@@ -74,7 +73,6 @@ function handleDisconnect() {
         }
     });
 }
-
 handleDisconnect();
 
 // ==========================================
@@ -155,28 +153,22 @@ app.get("/api/seats/:busId", (req, res) => {
 // ==========================================
 app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
-
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
     const busId = bookingDetails.busId || bookingDetails.bus_id;
 
     db.query("SELECT travel_date FROM buses WHERE bus_id = ?", [busId], (err, busResult) => {
         if (err) return res.status(500).json({ error: err.message });
+        if (!busResult.length) return res.status(400).json({ error: "Bus not found" });
 
-        if (!busResult.length) {
-            return res.status(400).json({ error: "Bus not found" });
-        }
-
-        // ✅ तारीख जशी आहे तशीच String फॉरमॅटमध्ये घेणे (00:00:00 गोंधळ टाळण्यासाठी)
-        const finalTravelDate = String(busResult[0].travel_date).split(' ')[0];
+        // ✅ तारीख फिक्स: Moment वापरून IST मध्ये लॉक केली
+        const finalTravelDate = moment(busResult[0].travel_date).format("YYYY-MM-DD");
 
         const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
-                            ? bookingDetails.userId 
-                            : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
+                            ? bookingDetails.userId : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
 
         const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
         const seatString = Array.isArray(bookingDetails.seats) ? bookingDetails.seats.join(',') : String(bookingDetails.seats);
-
         const razorOrder = bookingDetails.razorpayOrderId || "RZP_ORD_" + Date.now();
         const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
 
@@ -192,14 +184,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
             bookingDetails.passenger_age || 25, 
             seatString, 
             bookingDetails.totalFare || bookingDetails.total_amount, 
-            razorOrder, 
-            razorPayment,
-            finalTravelDate 
+            razorOrder, razorPayment, finalTravelDate 
         ], (err, result) => {
             if (err) return res.status(500).json({ success: false, error: err.message });
             
             const seatArray = seatString.split(',');
-
             db.query("UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", 
             [busId, seatArray], () => {
                 res.json({ success: true, pnr: generatedPnr });
@@ -209,7 +198,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
 });
 
 // ==========================================
-// ६. GET MY BOOKINGS (तारीख फिक्स सह)
+// ६. GET MY BOOKINGS
 // ==========================================
 app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
@@ -228,60 +217,60 @@ app.get("/api/my-bookings/:userId", (req, res) => {
         
         const formattedResults = results.map(row => ({
             ...row,
-            // 🔥 moment ऐवजी साध्या String पद्धतीने तारीख काढली जेणेकरून Timezone मुळे ती बदलणार नाही
-            travel_date: String(row.travel_date).split(' ')[0]
+            // ✅ फ्रंटएंडला पाठवताना तारीख "YYYY-MM-DD" फॉरमॅटमध्येच पाठवा
+            travel_date: moment(row.travel_date).format("YYYY-MM-DD")
         }));
         res.json(formattedResults);
     });
 });
 
 // ==========================================
-// ७. CANCEL TICKET
+// ७. CANCEL TICKET (Refund Logic Fixed)
 // ==========================================
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
 
     const sqlSelect = `
-    SELECT bk.bus_id, bk.seat_numbers, bk.total_amount, b.travel_date, bk.status 
+    SELECT bk.bus_id, bk.seat_numbers, bk.total_amount, bk.travel_date, bk.status, b.departure_time 
     FROM bookings bk 
     JOIN buses b ON bk.bus_id = b.bus_id 
     WHERE bk.pnr = ?`;
 
     db.query(sqlSelect, [pnr], (err, results) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
+        if (!results.length) return res.status(404).json({ success: false, message: "PNR not found" });
 
-        if (!results.length) {
-            return res.status(404).json({ success: false, message: "PNR not found" });
-        }
-
-        const { bus_id, seat_numbers, total_amount, travel_date, status } = results[0];
+        const { bus_id, seat_numbers, total_amount, travel_date, status, departure_time } = results[0];
 
         if (status === 'Cancelled') {
             return res.status(400).json({ success: false, message: "Already cancelled" });
         }
 
-        const journeyTime = moment.tz(travel_date, "YYYY-MM-DD", "Asia/Kolkata").startOf('day').add(9, 'hours').valueOf();
+        // ✅ नेमकी प्रवासाची वेळ (Date + Departure Time)
+        const journeyDateTimeStr = `${travel_date} ${departure_time || '09:00:00'}`;
+        const journeyTime = moment.tz(journeyDateTimeStr, "YYYY-MM-DD HH:mm:ss", "Asia/Kolkata").valueOf();
         const currentTime = moment().tz("Asia/Kolkata").valueOf();
 
         const diffInHours = (journeyTime - currentTime) / (1000 * 60 * 60);
 
         let refundPercent = 0;
         if (diffInHours >= 24) {
-            refundPercent = 0.70;
+            refundPercent = 0.70; // ७०% परतावा
         } else if (diffInHours >= 12) {
-            refundPercent = 0.50;
+            refundPercent = 0.50; // ५०% परतावा
         } else {
-            refundPercent = 0;
+            refundPercent = 0; // काहीही परतावा नाही
         }
 
         const refundAmount = (total_amount * refundPercent).toFixed(2);
 
         db.query("UPDATE bookings SET status = 'Cancelled' WHERE pnr = ?", [pnr], () => {
+            const seatsToFree = seat_numbers.split(',');
             db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", 
-            [bus_id, seat_numbers.split(',')], () => {
+            [bus_id, seatsToFree], () => {
                 res.json({ 
                     success: true, 
-                    message: `Cancelled! Refund: ₹${refundAmount}`,
+                    message: `Ticket Cancelled! Refund of ₹${refundAmount} will be processed.`,
                     refundAmount 
                 });
             });
