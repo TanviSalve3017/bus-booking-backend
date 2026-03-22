@@ -9,24 +9,27 @@ const moment = require("moment-timezone");
 const app = express();
 
 // ✅ १. सर्वात आधी CORS सेटअप
-const allowedOrigins = [
-    "http://localhost:3000",
-    "https://bus-booking-system-7pfon42lo-tanvisalve3017s-projects.vercel.app"
-];
-
 app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            callback(new Error("CORS not allowed"));
-        }
-    },
+     origin: [
+        "http://localhost:3000",
+        "https://bus-booking-system-6omn8z1ud-tanvisalve3017s-projects.vercel.app"
+    ],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    credentials: true
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+    credentials: true,
+    optionsSuccessStatus: 200 
 }));
 
-app.options("*", cors()); // 🔥 VERY IMPORTANT (preflight fix)
+app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
 
 app.use(express.json());
 
@@ -150,88 +153,56 @@ app.post("/api/verify-payment", (req, res) => {
     const busId = bookingDetails.busId || bookingDetails.bus_id;
     const selectedTravelDate = bookingDetails.travel_date || bookingDetails.travelDate;
 
-    console.log("🔥 USER SELECTED DATE:", selectedTravelDate);
-    console.log("🔥 busId:", busId);
-    console.log("🔥 bookingDetails:", bookingDetails);
-
-    // ✅ ADD 1: busId validation (CORRECT POSITION)
-    if (!busId) {
-        console.log("❌ busId missing");
-        return res.status(400).json({ error: "busId required" });
-    }
+console.log("🔥 USER SELECTED DATE:", selectedTravelDate);
 
     // 🔥 STEP 1: buses table मधून REAL travel_date काढ
     db.query("SELECT travel_date FROM buses WHERE bus_id = ?", [busId], (err, busResult) => {
+        if (err) return res.status(500).json({ error: err.message });
 
-        if (err) {
-            console.log("❌ DB ERROR:", err);
-            return res.status(500).json({ error: err.message });
-        }
-
-        // ✅ ADD 2: busResult validation (IMPORTANT)
-        if (!busResult || busResult.length === 0) {
-            console.log("❌ Bus not found in DB");
+        if (!busResult.length) {
             return res.status(400).json({ error: "Bus not found" });
         }
 
-        const actualTravelDate = busResult[0].travel_date;
-
-        // ✅ ADD 3: final date logic (user selected priority)
-        const finalTravelDate = selectedTravelDate || actualTravelDate;
+       const actualTravelDate = busResult[0].travel_date;
 
         const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
                             ? bookingDetails.userId 
                             : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
 
         const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
-
-        const seatString = Array.isArray(bookingDetails.seats) 
-            ? bookingDetails.seats.join(',') 
-            : String(bookingDetails.seats);
+        const seatString = Array.isArray(bookingDetails.seats) ? bookingDetails.seats.join(',') : String(bookingDetails.seats);
 
         const razorOrder = bookingDetails.razorpayOrderId || "RZP_ORD_" + Date.now();
         const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
 
         const sqlInsert = `INSERT INTO bookings 
-        (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
+(bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
 
-        db.query(sqlInsert, [
-            busId, 
-            finalUserId, 
-            generatedPnr, 
-            bookingDetails.fullName || bookingDetails.passenger_name, 
-            bookingDetails.email || bookingDetails.passenger_email, 
-            bookingDetails.mobile || bookingDetails.passenger_mobile, 
-            bookingDetails.passenger_age || 25, 
-            seatString, 
-            bookingDetails.totalFare || bookingDetails.total_amount, 
-            razorOrder, 
-            razorPayment,
-            finalTravelDate   // ✅ FINAL FIX
-        ], (err, result) => {
-
-            if (err) {
-                console.log("❌ INSERT ERROR:", err);
-                return res.status(500).json({ success: false, error: err.message });
-            }
-
+       db.query(sqlInsert, [
+    busId, finalUserId, generatedPnr, 
+    bookingDetails.fullName || bookingDetails.passenger_name, 
+    bookingDetails.email || bookingDetails.passenger_email, 
+    bookingDetails.mobile || bookingDetails.passenger_mobile, 
+    bookingDetails.passenger_age || 25, 
+    seatString, 
+    bookingDetails.totalFare || bookingDetails.total_amount, 
+    razorOrder, 
+    razorPayment,
+    finalTravelDate   // 🔥 स्ट्रिंग फॉरमॅटमध्ये तारीख पाठवा
+], (err, result) => {
+            if (err) return res.status(500).json({ success: false, error: err.message });
+            
             const seatArray = seatString.split(',');
 
-            db.query(
-                "UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)",
-                [busId, seatArray],
-                (updateErr) => {
-                    if (updateErr) {
-                        console.log("❌ सीट अपडेट एरर:", updateErr);
-                    }
-
-                    res.json({ success: true, pnr: generatedPnr });
-                }
-            );
+            db.query("UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", 
+            [busId, seatArray], () => {
+                res.json({ success: true, pnr: generatedPnr });
+            });
         });
     });
 });
+
 // ==========================================
 // ६. GET MY BOOKINGS (सुधारित तारीख लॉजिक)
 // ==========================================
