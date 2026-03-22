@@ -137,17 +137,15 @@ app.post("/api/verify-payment", (req, res) => {
 
     const busId = bookingDetails.busId || bookingDetails.bus_id;
 
-    // 🔥 सर्वात महत्त्वाचा बदल: 
-    // आधी चेक करा की फ्रंटएंडने निवडलेली तारीख (22, 26 इ.) पाठवली आहे का.
-    // ती असेल तर तीच फायनल मानायची.
+    // युजरने निवडलेली तारीख घ्या
     const userDate = bookingDetails.travelDate || bookingDetails.journeyDate || bookingDetails.travel_date;
 
     db.query("SELECT travel_date FROM buses WHERE bus_id = ?", [busId], (err, busResult) => {
         if (err) return res.status(500).json({ error: err.message });
         
-        // जर युजरने तारीख पाठवली असेल तर तीच वापरा, नसेल तर डेटाबेसमधली वापरा.
-        let finalTravelDate = userDate ? moment(userDate).format("YYYY-MM-DD") : 
-                             (busResult.length > 0 ? moment(busResult[0].travel_date).format("YYYY-MM-DD") : moment().format("YYYY-MM-DD"));
+        // तारीख फिक्स करण्यासाठी moment.tz वापरून स्ट्रिक्ट फॉरमॅट दिला आहे
+        let rawDate = userDate || (busResult.length > 0 ? busResult[0].travel_date : moment().format("YYYY-MM-DD"));
+        let finalTravelDate = moment(rawDate).format("YYYY-MM-DD");
 
         const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
                             ? bookingDetails.userId : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
@@ -180,7 +178,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
     });
 });
 
-// API 6: GET MY BOOKINGS
+// API 6: GET MY BOOKINGS (FIXED DATE OFFSET ISSUE)
 app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
     if (userId === "undefined" || userId === "null" || !userId) userId = 1;
@@ -194,9 +192,11 @@ app.get("/api/my-bookings/:userId", (req, res) => {
                  
     db.query(sql, [userId], (err, results) => {
         if (err) return res.status(500).json({ error: err.message });
+
+        // 🔥 बदल: .utc() वापरल्यामुळे तारीख शिफ्ट होणार नाही
         const formattedResults = results.map(row => ({
             ...row,
-            travel_date: moment(row.travel_date).format("YYYY-MM-DD")
+            travel_date: moment.utc(row.travel_date).format("YYYY-MM-DD")
         }));
         res.json(formattedResults);
     });
