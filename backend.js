@@ -46,8 +46,14 @@ function handleDisconnect() {
         password: process.env.DB_PASSWORD, 
         database: process.env.DB_NAME || "defaultdb", 
         port: process.env.DB_PORT || 23996, 
-        timezone: '+05:30', 
-        dateStrings: true,  
+        timezone: '+00:00', // UTC ठेवा जेणेकरून बेरीज-वजाबाकी होणार नाही
+        // dateStrings ऐवजी typeCast वापरा जेणेकरून तारीख जशी आहे तशीच येईल
+        typeCast: function (field, next) {
+            if (field.type === 'DATE') {
+                return field.string(); 
+            }
+            return next();
+        },
         ssl: { rejectUnauthorized: false },
         connectTimeout: 20000 
     });
@@ -136,14 +142,12 @@ app.post("/api/verify-payment", (req, res) => {
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
     const busId = bookingDetails.busId || bookingDetails.bus_id;
-
-    // युजरने निवडलेली तारीख घ्या
     const userDate = bookingDetails.travelDate || bookingDetails.journeyDate || bookingDetails.travel_date;
 
     db.query("SELECT travel_date FROM buses WHERE bus_id = ?", [busId], (err, busResult) => {
         if (err) return res.status(500).json({ error: err.message });
         
-        // तारीख फिक्स करण्यासाठी moment.tz वापरून स्ट्रिक्ट फॉरमॅट दिला आहे
+        // तारीख फिक्स करण्यासाठी ती कोणत्याही टाइमझोनमध्ये न फिरवता सरळ फॉरमॅट करा
         let rawDate = userDate || (busResult.length > 0 ? busResult[0].travel_date : moment().format("YYYY-MM-DD"));
         let finalTravelDate = moment(rawDate).format("YYYY-MM-DD");
 
@@ -193,11 +197,16 @@ app.get("/api/my-bookings/:userId", (req, res) => {
     db.query(sql, [userId], (err, results) => {
         if (err) return res.status(500).json({ error: err.message });
 
-        // 🔥 बदल: .utc() वापरल्यामुळे तारीख शिफ्ट होणार नाही
-        const formattedResults = results.map(row => ({
-            ...row,
-            travel_date: moment.utc(row.travel_date).format("YYYY-MM-DD")
-        }));
+        // 🔥 बदल: split('T')[0] वापरल्यामुळे वेळ काहीही असो, तारीख २२ ची २४ होणार नाही
+        const formattedResults = results.map(row => {
+            const cleanDate = row.travel_date && row.travel_date.includes('T') 
+                              ? row.travel_date.split('T')[0] 
+                              : row.travel_date;
+            return {
+                ...row,
+                travel_date: cleanDate
+            };
+        });
         res.json(formattedResults);
     });
 });
