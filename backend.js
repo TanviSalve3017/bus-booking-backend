@@ -143,15 +143,14 @@ app.post("/api/verify-payment", (req, res) => {
 
     const busId = bookingDetails.busId || bookingDetails.bus_id;
 
-    // 🔥 ONLY USER DATE (NO FALLBACK)
-    const userDate = bookingDetails.travelDate;
+    // 🔥 FIX: BOTH support
+    const userDate = bookingDetails.travelDate || bookingDetails.travel_date;
 
     if (!userDate) {
         console.log("❌ Travel date missing from frontend");
         return res.status(400).json({ error: "Travel date required" });
     }
 
-    // 🔥 CLEAN DATE (NO TIMEZONE ISSUE)
     const finalTravelDate = userDate.split("T")[0];
 
     console.log("✅ FINAL DATE SAVED:", finalTravelDate);
@@ -161,7 +160,10 @@ app.post("/api/verify-payment", (req, res) => {
                         : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
 
     const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
-    const seatString = Array.isArray(bookingDetails.seats) ? bookingDetails.seats.join(',') : String(bookingDetails.seats);
+
+    const seatString = Array.isArray(bookingDetails.seats) 
+        ? bookingDetails.seats.join(',') 
+        : String(bookingDetails.seats);
 
     const razorOrder = bookingDetails.razorpayOrderId || "RZP_ORD_" + Date.now();
     const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
@@ -180,7 +182,10 @@ app.post("/api/verify-payment", (req, res) => {
         bookingDetails.totalFare || bookingDetails.total_amount, 
         razorOrder, razorPayment, finalTravelDate 
     ], (err) => {
-        if (err) return res.status(500).json({ success: false, error: err.message });
+        if (err) {
+            console.log("❌ DB ERROR:", err.message);
+            return res.status(500).json({ success: false, error: err.message });
+        }
         
         db.query(
             "UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", 
