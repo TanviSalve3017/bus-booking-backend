@@ -142,57 +142,53 @@ app.post("/api/verify-payment", (req, res) => {
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
     const busId = bookingDetails.busId || bookingDetails.bus_id;
-    const userDate = bookingDetails.travelDate || bookingDetails.journeyDate || bookingDetails.travel_date;
 
-    db.query("SELECT travel_date FROM buses WHERE bus_id = ?", [busId], (err, busResult) => {
-        if (err) return res.status(500).json({ error: err.message });
+    // 🔥 ONLY USER DATE (NO FALLBACK)
+    const userDate = bookingDetails.travelDate;
 
-        // 🔥 FIX: moment काढून टाक — direct string वापर
-        let finalTravelDate;
+    if (!userDate) {
+        console.log("❌ Travel date missing from frontend");
+        return res.status(400).json({ error: "Travel date required" });
+    }
 
-        if (userDate) {
-            finalTravelDate = userDate.split("T")[0];  // frontend date clean
-        } else if (busResult.length > 0) {
-            finalTravelDate = busResult[0].travel_date; // DB date direct
-        } else {
-            finalTravelDate = new Date().toISOString().split("T")[0];
-        }
+    // 🔥 CLEAN DATE (NO TIMEZONE ISSUE)
+    const finalTravelDate = userDate.split("T")[0];
 
-        console.log("✅ FINAL DATE SAVED:", finalTravelDate);
+    console.log("✅ FINAL DATE SAVED:", finalTravelDate);
 
-        const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
-                            ? bookingDetails.userId 
-                            : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
+    const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
+                        ? bookingDetails.userId 
+                        : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
 
-        const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
-        const seatString = Array.isArray(bookingDetails.seats) ? bookingDetails.seats.join(',') : String(bookingDetails.seats);
-        const razorOrder = bookingDetails.razorpayOrderId || "RZP_ORD_" + Date.now();
-        const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
+    const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
+    const seatString = Array.isArray(bookingDetails.seats) ? bookingDetails.seats.join(',') : String(bookingDetails.seats);
 
-        const sqlInsert = `INSERT INTO bookings 
-        (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
+    const razorOrder = bookingDetails.razorpayOrderId || "RZP_ORD_" + Date.now();
+    const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
 
-        db.query(sqlInsert, [
-            busId, finalUserId, generatedPnr, 
-            bookingDetails.fullName || bookingDetails.passenger_name, 
-            bookingDetails.email || bookingDetails.passenger_email, 
-            bookingDetails.mobile || bookingDetails.passenger_mobile, 
-            bookingDetails.passenger_age || 25, 
-            seatString, 
-            bookingDetails.totalFare || bookingDetails.total_amount, 
-            razorOrder, razorPayment, finalTravelDate 
-        ], (err) => {
-            if (err) return res.status(500).json({ success: false, error: err.message });
-            
-            db.query(
-                "UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", 
-                [busId, seatString.split(',')], 
-                () => {
-                    res.json({ success: true, pnr: generatedPnr, travelDate: finalTravelDate });
-                }
-            );
-        });
+    const sqlInsert = `INSERT INTO bookings 
+    (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
+
+    db.query(sqlInsert, [
+        busId, finalUserId, generatedPnr, 
+        bookingDetails.fullName || bookingDetails.passenger_name, 
+        bookingDetails.email || bookingDetails.passenger_email, 
+        bookingDetails.mobile || bookingDetails.passenger_mobile, 
+        bookingDetails.passenger_age || 25, 
+        seatString, 
+        bookingDetails.totalFare || bookingDetails.total_amount, 
+        razorOrder, razorPayment, finalTravelDate 
+    ], (err) => {
+        if (err) return res.status(500).json({ success: false, error: err.message });
+        
+        db.query(
+            "UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", 
+            [busId, seatString.split(',')], 
+            () => {
+                res.json({ success: true, pnr: generatedPnr, travelDate: finalTravelDate });
+            }
+        );
     });
 });
 
