@@ -146,13 +146,23 @@ app.post("/api/verify-payment", (req, res) => {
 
     db.query("SELECT travel_date FROM buses WHERE bus_id = ?", [busId], (err, busResult) => {
         if (err) return res.status(500).json({ error: err.message });
-        
-        // तारीख फिक्स करण्यासाठी ती कोणत्याही टाइमझोनमध्ये न फिरवता सरळ फॉरमॅट करा
-        let rawDate = userDate || (busResult.length > 0 ? busResult[0].travel_date : moment().format("YYYY-MM-DD"));
-        let finalTravelDate = moment(rawDate).format("YYYY-MM-DD");
+
+        // 🔥 FIX: moment काढून टाक — direct string वापर
+        let finalTravelDate;
+
+        if (userDate) {
+            finalTravelDate = userDate.split("T")[0];  // frontend date clean
+        } else if (busResult.length > 0) {
+            finalTravelDate = busResult[0].travel_date; // DB date direct
+        } else {
+            finalTravelDate = new Date().toISOString().split("T")[0];
+        }
+
+        console.log("✅ FINAL DATE SAVED:", finalTravelDate);
 
         const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
-                            ? bookingDetails.userId : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
+                            ? bookingDetails.userId 
+                            : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
 
         const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
         const seatString = Array.isArray(bookingDetails.seats) ? bookingDetails.seats.join(',') : String(bookingDetails.seats);
@@ -160,8 +170,8 @@ app.post("/api/verify-payment", (req, res) => {
         const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
 
         const sqlInsert = `INSERT INTO bookings 
-(bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
+        (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
 
         db.query(sqlInsert, [
             busId, finalUserId, generatedPnr, 
@@ -175,9 +185,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
         ], (err) => {
             if (err) return res.status(500).json({ success: false, error: err.message });
             
-            db.query("UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", [busId, seatString.split(',')], () => {
-                res.json({ success: true, pnr: generatedPnr, travelDate: finalTravelDate });
-            });
+            db.query(
+                "UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", 
+                [busId, seatString.split(',')], 
+                () => {
+                    res.json({ success: true, pnr: generatedPnr, travelDate: finalTravelDate });
+                }
+            );
         });
     });
 });
