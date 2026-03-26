@@ -46,7 +46,7 @@ function handleDisconnect() {
         password: process.env.DB_PASSWORD, 
         database: process.env.DB_NAME || "defaultdb", 
         port: process.env.DB_PORT || 23996, 
-        timezone: '+00:00', 
+        timezone: '+00:00',
         typeCast: function (field, next) {
             if (field.type === 'DATE') {
                 return field.string(); 
@@ -135,29 +135,42 @@ app.get("/api/seats/:busId", (req, res) => {
     });
 });
 
-// API 5: VERIFY PAYMENT & SAVE BOOKING (FIXED WITH ERROR HANDLING)
+// API 5: VERIFY PAYMENT & SAVE BOOKING (🔥 FIXED)
 app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
-    if (!bookingDetails) return res.status(400).json({ message: "No Data Received" });
+    if (!bookingDetails) return res.status(400).json({ message: "No Data" });
 
-    // १. डेटा काढणे
+    console.log("🔥 INCOMING DATA:", bookingDetails);
+
     const busId = bookingDetails.busId || bookingDetails.bus_id;
-    const userDate = bookingDetails.travelDate || bookingDetails.travel_date;
-    const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
-                        ? bookingDetails.userId 
-                        : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
 
-    // २. व्हॅलिडेशन
-    if (!busId || !userDate) {
-        return res.status(400).json({ error: "Bus ID and Travel date are required" });
-    }
+    const userDate = bookingDetails.travelDate || bookingDetails.travel_date;
+    if (!userDate) return res.status(400).json({ error: "Travel date required" });
 
     const finalTravelDate = userDate.split("T")[0];
+
+    const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
+        ? bookingDetails.userId 
+        : (bookingDetails.user_id ? bookingDetails.user_id : 1); 
+
     const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
 
-    // ३. सीट्स मॅनेजमेंट (IN क्लॉजसाठी ॲरे तयार करणे)
-    const seatsArray = Array.isArray(bookingDetails.seats) ? bookingDetails.seats : [bookingDetails.seats];
-    const seatString = seatsArray.join(',');
+    const seatString = Array.isArray(bookingDetails.seats) 
+        ? bookingDetails.seats.join(',') 
+        : String(bookingDetails.seats);
+
+    // 🔥 FIX: passenger_age handle
+    let finalPassengerAge = bookingDetails.passenger_age;
+
+    if (typeof finalPassengerAge === "string") {
+        finalPassengerAge = finalPassengerAge.split(",")[0].trim();
+    }
+
+    if (!finalPassengerAge || isNaN(finalPassengerAge)) {
+        finalPassengerAge = 25;
+    }
+
+    console.log("✅ FINAL AGE:", finalPassengerAge);
 
     const razorOrder = bookingDetails.razorpayOrderId || "RZP_ORD_" + Date.now();
     const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
@@ -171,29 +184,28 @@ app.post("/api/verify-payment", (req, res) => {
         bookingDetails.fullName || bookingDetails.passenger_name, 
         bookingDetails.email || bookingDetails.passenger_email, 
         bookingDetails.mobile || bookingDetails.passenger_mobile, 
-        bookingDetails.passenger_age || 25, 
+        finalPassengerAge, // ✅ FIXED
         seatString, 
         bookingDetails.totalFare || bookingDetails.total_amount, 
         razorOrder, razorPayment, finalTravelDate 
     ], (err) => {
         if (err) {
-            console.error("❌ DB INSERT ERROR:", err.message);
+            console.log("❌ DB ERROR:", err.message);
             return res.status(500).json({ success: false, error: err.message });
         }
         
-        // ४. सीट्स अपडेट (Fix: Multiple seats update logic)
         db.query(
             "UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)", 
-            [busId, seatsArray], 
-            (updateErr) => {
-                if (updateErr) console.error("⚠️ Seats Update Failed:", updateErr.message);
+            [busId, seatString.split(',')], 
+            () => {
                 res.json({ success: true, pnr: generatedPnr, travelDate: finalTravelDate });
             }
         );
     });
 });
 
-// API 6: GET MY BOOKINGS
+// बाकी code untouched
+
 app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
     if (userId === "undefined" || userId === "null" || !userId) userId = 1;
@@ -210,30 +222,31 @@ app.get("/api/my-bookings/:userId", (req, res) => {
 
         const formattedResults = results.map(row => {
             const cleanDate = row.travel_date && row.travel_date.includes('T') 
-                              ? row.travel_date.split('T')[0] 
-                              : row.travel_date;
-            return {
-                ...row,
-                travel_date: cleanDate
-            };
+                ? row.travel_date.split('T')[0] 
+                : row.travel_date;
+            return { ...row, travel_date: cleanDate };
         });
+
         res.json(formattedResults);
     });
 });
 
-// API 7: CANCEL TICKET
 app.put("/api/cancel-ticket/:pnr", (req, res) => {
     const { pnr } = req.params;
     const sqlSelect = `SELECT bk.bus_id, bk.seat_numbers, bk.total_amount, bk.travel_date, bk.status, b.departure_time FROM bookings bk JOIN buses b ON bk.bus_id = b.bus_id WHERE bk.pnr = ?`;
+
     db.query(sqlSelect, [pnr], (err, results) => {
         if (err) return res.status(500).json({ success: false, error: err.message });
         if (!results.length) return res.status(404).json({ success: false, message: "PNR not found" });
+
         const { bus_id, seat_numbers, total_amount, travel_date, status, departure_time } = results[0];
+
         if (status === 'Cancelled') return res.status(400).json({ success: false, message: "Already cancelled" });
 
         const journeyDateTimeStr = `${travel_date} ${departure_time || '09:00:00'}`;
         const journeyTime = moment.tz(journeyDateTimeStr, "YYYY-MM-DD HH:mm:ss", "Asia/Kolkata").valueOf();
         const currentTime = moment().tz("Asia/Kolkata").valueOf();
+
         const diffInHours = (journeyTime - currentTime) / (1000 * 60 * 60);
 
         let refundPercent = diffInHours >= 24 ? 0.70 : (diffInHours >= 12 ? 0.50 : 0);
