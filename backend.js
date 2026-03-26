@@ -135,7 +135,7 @@ app.get("/api/seats/:busId", (req, res) => {
     });
 });
 
-// API 5: VERIFY PAYMENT & SAVE BOOKING (🔥 FINAL VERSION)
+// API 5: VERIFY PAYMENT & SAVE BOOKING (🔥 MERGED VERSION)
 app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
@@ -156,24 +156,22 @@ app.post("/api/verify-payment", (req, res) => {
 
     const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
 
-    // ✅ FIX 1: Ensure seats is an array for SQL IN clause
+    // ✅ FIX 1: Seat numbers formatting for DB
     const seatArray = Array.isArray(bookingDetails.seats) 
         ? bookingDetails.seats 
         : (bookingDetails.seats ? String(bookingDetails.seats).split(',') : ["1A"]);
     
     const seatString = seatArray.join(',');
 
-    // ✅ FIX 2: Better Age Parsing Logic
+    // ✅ FIX 2: Age parsing for INT column (Handling '21 / F' etc.)
     let rawAge = bookingDetails.passengers?.[0]?.age || bookingDetails.passenger_age || 25;
-    if (typeof rawAge === "string") {
-        rawAge = rawAge.split(",")[0].trim();
-    }
-    let finalPassengerAge = parseInt(rawAge);
+    let finalPassengerAge = parseInt(String(rawAge).split('/')[0].split(',')[0].trim());
     if (isNaN(finalPassengerAge)) finalPassengerAge = 25;
 
     const razorOrder = bookingDetails.razorpayOrderId || "RZP_ORD_" + Date.now();
     const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
 
+    // SQL INSERT (Matches your DB columns)
     const sqlInsert = `INSERT INTO bookings 
     (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
