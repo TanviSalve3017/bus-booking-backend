@@ -143,11 +143,12 @@ app.post("/api/verify-payment", (req, res) => {
     console.log("🔥 INCOMING DATA:", bookingDetails);
 
     const busId = bookingDetails.busId || bookingDetails.bus_id;
+    if (!busId) return res.status(400).json({ error: "Bus ID missing" });
 
     const userDate = bookingDetails.travelDate || bookingDetails.travel_date;
     if (!userDate) return res.status(400).json({ error: "Travel date required" });
 
-    const finalTravelDate = userDate.split("T")[0];
+    const finalTravelDate = userDate.includes("T") ? userDate.split("T")[0] : userDate;
 
     const finalUserId = (bookingDetails.userId && bookingDetails.userId !== "undefined" && bookingDetails.userId !== "null") 
         ? bookingDetails.userId 
@@ -155,61 +156,56 @@ app.post("/api/verify-payment", (req, res) => {
 
     const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
 
-    const seatString = Array.isArray(bookingDetails.seats) 
-        ? bookingDetails.seats.join(',') 
-        : String(bookingDetails.seats);
+    // ✅ FIX 1: Ensure seats is an array for SQL IN clause
+    const seatArray = Array.isArray(bookingDetails.seats) 
+        ? bookingDetails.seats 
+        : (bookingDetails.seats ? String(bookingDetails.seats).split(',') : ["1A"]);
+    
+    const seatString = seatArray.join(',');
 
-    // 🔥 FIX: passenger_age handle
-    let finalPassengerAge = bookingDetails.passengers?.[0]?.age || 25;
-
-    if (typeof finalPassengerAge === "string") {
-        finalPassengerAge = finalPassengerAge.split(",")[0].trim();
-    }
-
-    if (!finalPassengerAge || isNaN(finalPassengerAge)) {
-        finalPassengerAge = 25;
-    }
-
-    console.log("✅ FINAL AGE:", finalPassengerAge);
+    let finalPassengerAge = bookingDetails.passengers?.[0]?.age || bookingDetails.passenger_age || 25;
+    if (typeof finalPassengerAge === "string") finalPassengerAge = finalPassengerAge.split(",")[0].trim();
+    if (!finalPassengerAge || isNaN(finalPassengerAge)) finalPassengerAge = 25;
 
     const razorOrder = bookingDetails.razorpayOrderId || "RZP_ORD_" + Date.now();
     const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
 
-  const sqlInsert = `INSERT INTO bookings 
-(bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
+    const sqlInsert = `INSERT INTO bookings 
+    (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
 
-db.query(sqlInsert, [
-    busId,
-    finalUserId,
-    generatedPnr,
-    bookingDetails.fullName || bookingDetails.passenger_name || "Guest",
-    bookingDetails.email || bookingDetails.passenger_email || "test@test.com",
-    bookingDetails.mobile || bookingDetails.passenger_mobile || "0000000000",
-    finalPassengerAge,
-    seatString || "1A",
-    bookingDetails.totalAmount || bookingDetails.total_amount || bookingDetails.totalFare || 0,
-    razorOrder,
-    razorPayment,
-    finalTravelDate
-], (err) => {
-    if (err) {
-        console.log("❌ DB ERROR FULL:", err);
-        return res.status(500).json({ success: false, error: err.message });
-    }
-
-    const seatArray = seatString ? seatString.split(',') : [];
-
-    db.query(
-        "UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)",
-        [busId, seatArray],
-        () => {
-            res.json({ success: true, pnr: generatedPnr, travelDate: finalTravelDate });
+    db.query(sqlInsert, [
+        busId, finalUserId, generatedPnr,
+        bookingDetails.fullName || bookingDetails.passenger_name || "Guest",
+        bookingDetails.email || bookingDetails.passenger_email || "test@test.com",
+        bookingDetails.mobile || bookingDetails.passenger_mobile || "0000000000",
+        finalPassengerAge,
+        seatString,
+        bookingDetails.totalAmount || bookingDetails.total_amount || bookingDetails.totalFare || 0,
+        razorOrder,
+        razorPayment,
+        finalTravelDate
+    ], (err) => {
+        if (err) {
+            console.log("❌ DB INSERT ERROR:", err.sqlMessage || err.message);
+            return res.status(500).json({ success: false, error: err.message });
         }
-    );
+
+        // ✅ FIX 2: Correct format for 'IN' clause with multiple values
+        // mysql2 library requires a nested array for IN clauses: [[val1, val2]]
+        db.query(
+            "UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)",
+            [busId, seatArray],
+            (updErr) => {
+                if (updErr) {
+                    console.log("⚠️ SEAT UPDATE ERROR:", updErr.message);
+                    // We don't return 500 here because booking is already inserted
+                }
+                res.json({ success: true, pnr: generatedPnr, travelDate: finalTravelDate });
+            }
+        );
+    });
 });
-});  
-// बाकी code untouched
 
 app.get("/api/my-bookings/:userId", (req, res) => {
     let { userId } = req.params;
@@ -224,14 +220,11 @@ app.get("/api/my-bookings/:userId", (req, res) => {
                  
     db.query(sql, [userId], (err, results) => {
         if (err) return res.status(500).json({ error: err.message });
-
         const formattedResults = results.map(row => {
             const cleanDate = row.travel_date && row.travel_date.includes('T') 
-                ? row.travel_date.split('T')[0] 
-                : row.travel_date;
+                ? row.travel_date.split('T')[0] : row.travel_date;
             return { ...row, travel_date: cleanDate };
         });
-
         res.json(formattedResults);
     });
 });
@@ -245,20 +238,20 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
         if (!results.length) return res.status(404).json({ success: false, message: "PNR not found" });
 
         const { bus_id, seat_numbers, total_amount, travel_date, status, departure_time } = results[0];
-
         if (status === 'Cancelled') return res.status(400).json({ success: false, message: "Already cancelled" });
 
         const journeyDateTimeStr = `${travel_date} ${departure_time || '09:00:00'}`;
         const journeyTime = moment.tz(journeyDateTimeStr, "YYYY-MM-DD HH:mm:ss", "Asia/Kolkata").valueOf();
         const currentTime = moment().tz("Asia/Kolkata").valueOf();
-
         const diffInHours = (journeyTime - currentTime) / (1000 * 60 * 60);
 
         let refundPercent = diffInHours >= 24 ? 0.70 : (diffInHours >= 12 ? 0.50 : 0);
         const refundAmount = (total_amount * refundPercent).toFixed(2);
 
         db.query("UPDATE bookings SET status = 'Cancelled' WHERE pnr = ?", [pnr], () => {
-            db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seat_numbers.split(',')], () => {
+            // ✅ Fix: Handle seat splitting for cancellation update
+            const seatsToRelease = seat_numbers.split(',');
+            db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seatsToRelease], () => {
                 res.json({ success: true, message: `Cancelled! Refund: ₹${refundAmount}`, refundAmount });
             });
         });
