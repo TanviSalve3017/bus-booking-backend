@@ -40,7 +40,8 @@ app.use(express.json());
 // ✅ DATABASE CONNECTION
 let db;
 function handleDisconnect() {
-    db = mysql.createConnection({
+    // टीप: इकडे आपण 'Pool' वापरत आहोत जेणेकरून वारंवार 'Connection Lost' एरर येऊ नये
+    db = mysql.createPool({
         host: process.env.DB_HOST || "mysql-16a68106-bus-reservation-j.aivencloud.com",
         user: process.env.DB_USER || "avnadmin",
         password: process.env.DB_PASSWORD, 
@@ -57,19 +58,7 @@ function handleDisconnect() {
         connectTimeout: 20000 
     });
 
-    db.connect((err) => {
-        if (err) {
-            console.error("❌ Connection Error:", err.message);
-            setTimeout(handleDisconnect, 2000); 
-        } else {
-            console.log("✅ Database Connected!");
-        }
-    });
-
-    db.on('error', (err) => {
-        if (err.code === 'PROTOCOL_CONNECTION_LOST') handleDisconnect();
-        else throw err;
-    });
+    console.log("✅ Database Pool Created!");
 }
 handleDisconnect();
 
@@ -135,7 +124,7 @@ app.get("/api/seats/:busId", (req, res) => {
     });
 });
 
-// API 5: VERIFY PAYMENT & SAVE BOOKING (🔥 MERGED VERSION)
+// API 5: VERIFY PAYMENT & SAVE BOOKING
 app.post("/api/verify-payment", (req, res) => {
     const { bookingDetails } = req.body;
     if (!bookingDetails) return res.status(400).json({ message: "No Data" });
@@ -156,14 +145,14 @@ app.post("/api/verify-payment", (req, res) => {
 
     const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
 
-    // ✅ FIX 1: Seat numbers formatting for DB
+    // ✅ FIX 1: Seat formatting
     const seatArray = Array.isArray(bookingDetails.seats) 
         ? bookingDetails.seats 
         : (bookingDetails.seats ? String(bookingDetails.seats).split(',') : ["1A"]);
     
     const seatString = seatArray.join(',');
 
-    // ✅ FIX 2: Age parsing for INT column (Handling '21 / F' etc.)
+    // ✅ FIX 2: Age parsing
     let rawAge = bookingDetails.passengers?.[0]?.age || bookingDetails.passenger_age || 25;
     let finalPassengerAge = parseInt(String(rawAge).split('/')[0].split(',')[0].trim());
     if (isNaN(finalPassengerAge)) finalPassengerAge = 25;
@@ -171,7 +160,6 @@ app.post("/api/verify-payment", (req, res) => {
     const razorOrder = bookingDetails.razorpayOrderId || "RZP_ORD_" + Date.now();
     const razorPayment = bookingDetails.razorpayPaymentId || "RZP_PAY_" + Date.now();
 
-    // SQL INSERT (Matches your DB columns)
     const sqlInsert = `INSERT INTO bookings 
     (bus_id, user_id, pnr, passenger_name, passenger_email, passenger_mobile, passenger_age, seat_numbers, total_amount, payment_status, status, razorpay_order_id, razorpay_payment_id, travel_date) 
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Success', 'Confirmed', ?, ?, ?)`;
@@ -193,14 +181,12 @@ app.post("/api/verify-payment", (req, res) => {
             return res.status(500).json({ success: false, error: err.message });
         }
 
-        // ✅ FIX 3: Nested array [seatArray] is required by mysql2 for 'IN (?)'
+        // ✅ FIX 3: IN (?) साठी [seatArray] वापरला आहे
         db.query(
             "UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)",
             [busId, seatArray],
             (updErr) => {
-                if (updErr) {
-                    console.log("⚠️ SEAT UPDATE WARNING:", updErr.message);
-                }
+                if (updErr) console.log("⚠️ SEAT UPDATE WARNING:", updErr.message);
                 res.json({ success: true, pnr: generatedPnr, travelDate: finalTravelDate });
             }
         );
@@ -250,7 +236,8 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
 
         db.query("UPDATE bookings SET status = 'Cancelled' WHERE pnr = ?", [pnr], () => {
             const seatsToRelease = seat_numbers.split(',');
-            db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seatsToRelease], () => {
+            // ✅ FIX 4: IN (?) क्लॉजसाठी seatsToRelease वापरले
+            db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seatsToRelease], (updErr) => {
                 res.json({ success: true, message: `Cancelled! Refund: ₹${refundAmount}`, refundAmount });
             });
         });
