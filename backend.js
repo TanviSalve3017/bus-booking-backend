@@ -40,7 +40,6 @@ app.use(express.json());
 // ✅ DATABASE CONNECTION
 let db;
 function handleDisconnect() {
-    // टीप: इकडे आपण 'Pool' वापरत आहोत जेणेकरून वारंवार 'Connection Lost' एरर येऊ नये
     db = mysql.createPool({
         host: process.env.DB_HOST || "mysql-16a68106-bus-reservation-j.aivencloud.com",
         user: process.env.DB_USER || "avnadmin",
@@ -86,7 +85,7 @@ app.post("/api/login", (req, res) => {
     });
 });
 
-// API 3: BUS SEARCH 
+// API 3: BUS SEARCH (Updated with Date logic)
 app.get("/api/buses", (req, res) => {
     let { from, to, date, busType, maxPrice, operator } = req.query;
     const fromCity = from ? from.toLowerCase().trim() : "";
@@ -100,9 +99,11 @@ app.get("/api/buses", (req, res) => {
     
     let params = [fromCity, toCity];
 
-    if (date) {
+    // ✅ तारखेचे लॉजिक अधिक मजबूत केले:
+    if (date && date !== "" && date !== "undefined" && date !== "null") {
+        const cleanDate = date.includes("T") ? date.split("T")[0] : date;
         sql += " AND b.travel_date = ?";
-        params.push(date);
+        params.push(cleanDate);
     }
 
     if (busType) { sql += " AND b.bus_type = ?"; params.push(busType); }
@@ -145,14 +146,12 @@ app.post("/api/verify-payment", (req, res) => {
 
     const generatedPnr = "PNR" + Math.floor(100000 + Math.random() * 900000);
 
-    // ✅ FIX 1: Seat formatting
     const seatArray = Array.isArray(bookingDetails.seats) 
         ? bookingDetails.seats 
         : (bookingDetails.seats ? String(bookingDetails.seats).split(',') : ["1A"]);
     
     const seatString = seatArray.join(',');
 
-    // ✅ FIX 2: Age parsing
     let rawAge = bookingDetails.passengers?.[0]?.age || bookingDetails.passenger_age || 25;
     let finalPassengerAge = parseInt(String(rawAge).split('/')[0].split(',')[0].trim());
     if (isNaN(finalPassengerAge)) finalPassengerAge = 25;
@@ -181,7 +180,6 @@ app.post("/api/verify-payment", (req, res) => {
             return res.status(500).json({ success: false, error: err.message });
         }
 
-        // ✅ FIX 3: IN (?) साठी [seatArray] वापरला आहे
         db.query(
             "UPDATE seats SET is_booked = 1 WHERE bus_id = ? AND seat_number IN (?)",
             [busId, seatArray],
@@ -236,11 +234,28 @@ app.put("/api/cancel-ticket/:pnr", (req, res) => {
 
         db.query("UPDATE bookings SET status = 'Cancelled' WHERE pnr = ?", [pnr], () => {
             const seatsToRelease = seat_numbers.split(',');
-            // ✅ FIX 4: IN (?) क्लॉजसाठी seatsToRelease वापरले
             db.query("UPDATE seats SET is_booked = 0 WHERE bus_id = ? AND seat_number IN (?)", [bus_id, seatsToRelease], (updErr) => {
                 res.json({ success: true, message: `Cancelled! Refund: ₹${refundAmount}`, refundAmount });
             });
         });
+    });
+});
+
+// ✅ नवीन बसेससाठी सीट्स आपोआप चेक करण्यासाठी एक API
+app.get("/api/admin/fix-seats", (req, res) => {
+    const query = `
+        INSERT INTO seats (bus_id, seat_number, seat_type)
+        SELECT b.bus_id, n.seat_no, IF(b.bus_type LIKE '%Sleeper%', 'Sleeper', 'Seater')
+        FROM buses b
+        JOIN (
+            SELECT 'L1' as seat_no UNION SELECT 'L2' UNION SELECT 'L3' UNION SELECT '1A' UNION SELECT '1B'
+        ) n
+        LEFT JOIN seats s ON b.bus_id = s.bus_id AND n.seat_no = s.seat_number
+        WHERE s.seat_id IS NULL;
+    `;
+    db.query(query, (err, results) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ message: "Missing seats fixed!", affectedRows: results.affectedRows });
     });
 });
 
