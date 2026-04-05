@@ -10,18 +10,20 @@ const app = express();
 
 // ✅ १. CORS सेटिंग
 app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin || 
-            origin.includes("vercel.app") || 
-            origin === "https://bus-booking-system-gamma-gilt.vercel.app" || // <--- तुझी Vercel लिंक इथे टाकू शकतोसgit add .
-            origin.includes("localhost") ||
-            origin.includes("http://localhost:3000") ||
-            origin.includes("http://localhost:5001")) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
+origin: function (origin, callback) {
+    const allowedOrigins = [
+        "https://bus-booking-system-gamma-gilt.vercel.app", // तुझी खरी Vercel लिंक
+        "http://localhost:3000",
+        "http://localhost:5173", // Vite साठी
+        "http://localhost:5001"
+    ];
+    
+    if (!origin || allowedOrigins.includes(origin) || origin.includes("vercel.app")) {
+        callback(null, true);
+    } else {
+        callback(new Error('Not allowed by CORS'));
+    }
+},
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Origin", "X-Requested-With", "Content-Type", "Accept", "Authorization"],
     credentials: true,
