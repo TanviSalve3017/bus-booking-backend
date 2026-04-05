@@ -13,6 +13,7 @@ app.use(cors({
     origin: function (origin, callback) {
         if (!origin || 
             origin.includes("vercel.app") || 
+            origin === "https://bus-booking-system-gamma-gilt.vercel.app" || // <--- तुझी Vercel लिंक इथे टाकू शकतोसgit add .
             origin.includes("localhost") ||
             origin.includes("http://localhost:3000") ||
             origin.includes("http://localhost:5001")) {
